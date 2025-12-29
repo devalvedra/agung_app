@@ -1,0 +1,62 @@
+{
+  "drop_point": [
+    {
+      "code": "K-001",
+      "category": "Kendaraan"
+    },
+    {
+      "code": "K-002",
+      "category": "Kendaraan"
+    },
+    {
+      "code": "T-001",
+      "category": "Toko"
+    },
+    {
+      "code": "T-002",
+      "category": "Toko"
+    },
+    {
+      "code": "T-003",
+      "category": "Toko"
+    }
+  ],
+  "route": [
+    {
+      "code": "A",
+      "name": "Rute A",
+      "route_points": [
+        {
+          "drop_point_code": "HO",
+          "sequence": 1
+        },
+        {
+          "drop_point_code": "T-001",
+          "sequence": 2
+        },
+        {
+          "drop_point_code": "T-002",
+          "sequence": 3
+        },
+        {
+          "drop_point_code": "T-003",
+          "sequence": 4
+        }
+      ]
+    },
+    {
+      "code": "B",
+      "name": "Rute B",
+      "route_points": [
+        {
+          "drop_point_code": "HO",
+          "sequence": 1
+        },
+        {
+          "drop_point_code": "T-004",
+          "sequence": 2
+        }
+      ]
+    }
+  ]
+}

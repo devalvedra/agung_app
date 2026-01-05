@@ -13,6 +13,10 @@ dependencies:
   mobile_scanner: ^7.1.4
   audioplayers: ^6.5.1
   vibration: ^3.1.5
+  google_maps_flutter: ^2.14.0
+  flutter_polyline_points: ^3.0.1
+  geolocator: ^13.0.2
+  get: ^4.7.3
 
 dev_dependencies:
   flutter_test:
@@ -24,3 +28,4 @@ flutter:
   assets:
     - lib/constants/dummy_data.json
     - assets/sounds/
+    - assets/images/

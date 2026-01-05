@@ -49,5 +49,9 @@
 	<string>This app needs camera access to scan QR codes</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>This app needs photos access to get QR code from photo library</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app needs location access to find the closest delivery route</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>This app needs location access to track delivery routes</string>
 </dict>
 </plist>

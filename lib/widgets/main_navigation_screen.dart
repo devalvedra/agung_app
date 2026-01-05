@@ -16,8 +16,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   final List<Widget> _screens = [
     const HomeScreen(),
-    const OrdersScreen(),
     const TrackingScreen(),
+    const OrdersScreen(),
     const ProfileScreen(),
   ];
 
@@ -38,12 +38,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
           BottomNavigationBarItem(
-            icon: Icon(Icons.shopping_bag),
-            label: 'Orders',
-          ),
-          BottomNavigationBarItem(
             icon: Icon(Icons.location_on),
             label: 'Tracking',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.shopping_bag),
+            label: 'Orders',
           ),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
         ],

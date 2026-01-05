@@ -19,6 +19,10 @@
     {
       "code": "T-003",
       "category": "Toko"
+    },
+    {
+      "code": "KR-001",
+      "category": "Rute"
     }
   ],
   "route": [
@@ -28,19 +32,31 @@
       "route_points": [
         {
           "drop_point_code": "HO",
-          "sequence": 1
+          "drop_point_name": "Head Office",
+          "sequence": 1,
+          "lat": "-0.050247209500484565",
+          "lng": "109.3343967923594"
         },
         {
           "drop_point_code": "T-001",
-          "sequence": 2
+          "drop_point_name": "Toko 1",
+          "sequence": 2,
+          "lat": "-0.02146354149383126",
+          "lng": "109.33837232680094"
         },
         {
           "drop_point_code": "T-002",
-          "sequence": 3
+          "drop_point_name": "Toko 2",
+          "sequence": 3,
+          "lat": "-0.07578354253681645",
+          "lng": "109.36926258881506"
         },
         {
-          "drop_point_code": "T-003",
-          "sequence": 4
+          "drop_point_code": "HO",
+          "drop_point_name": "Head Office",
+          "sequence": 4,
+          "lat": "-0.050247209500484565",
+          "lng": "109.3343967923594"
         }
       ]
     },
@@ -50,11 +66,24 @@
       "route_points": [
         {
           "drop_point_code": "HO",
-          "sequence": 1
+          "drop_point_name": "Head Office",
+          "sequence": 1,
+          "lat": "0.0263",
+          "lng": "109.3425"
+        },
+        {
+          "drop_point_code": "T-003",
+          "drop_point_name": "Toko 3",
+          "sequence": 2,
+          "lat": "0.5234",
+          "lng": "109.1567"
         },
         {
           "drop_point_code": "T-004",
-          "sequence": 2
+          "drop_point_name": "Toko 4",
+          "sequence": 3,
+          "lat": "0.7821",
+          "lng": "109.4893"
         }
       ]
     }

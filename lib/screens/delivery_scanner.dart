@@ -1,23 +1,64 @@
 import 'dart:convert';
+import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
+import 'package:get/get.dart';
+import '../controllers/scanned_items_controller.dart';
 
 /// Implementation of Mobile Scanner example with multiple code scanning
 class DeliveryScanner extends StatefulWidget {
   /// Constructor for multiple code scanner example
-  const DeliveryScanner({super.key});
+  final bool fromTracking;
+  final String? dropPointCode;
+  final Map<String, dynamic>? currentPoint;
+
+  const DeliveryScanner({
+    super.key,
+    this.fromTracking = false,
+    this.dropPointCode,
+    this.currentPoint,
+  });
 
   @override
   State<DeliveryScanner> createState() => _DeliveryScannerState();
 }
 
 class _DeliveryScannerState extends State<DeliveryScanner> {
+  // Global scanned items controller
+  final ScannedItemsController _scannedItemsController = Get.put(
+    ScannedItemsController(),
+  );
+
   // Drop point data from JSON
   List<Map<String, dynamic>> _dropPoints = [];
   List<Map<String, dynamic>> _routes = [];
+
+  /// Scanned item format:
+  /// {
+  ///   'invoice_code': 'INV001',           // Invoice number
+  ///   'route_code': 'A',                  // Route identifier (A, B, C, etc.)
+  ///   'drop_point_code': 'T-001',         // Drop point code (T-001, K-A, etc.)
+  ///   'num_of_items': 'B',                // Total items category (A, B, C, etc.)
+  ///   'item_size': '2',                   // Size category (1, 2, 3, etc.)
+  ///   'num_of_items_per_size': '5',       // Number of items for this size
+  ///   'index': '00001',                   // Unique item index
+  ///   'full_code': 'INV001|A|T-001|B|2|5|00001',  // Full scanned barcode
+  /// }
+  ///
+  /// Example to add manually in debug:
+  /// _scannedItemsController.addScannedItem({
+  ///   'invoice_code': 'INV001',
+  ///   'route_code': 'A',
+  ///   'drop_point_code': 'T-001',
+  ///   'num_of_items': 'B',
+  ///   'item_size': '2',
+  ///   'num_of_items_per_size': '5',
+  ///   'index': '00001',
+  ///   'full_code': 'INV001|A|T-001|B|2|5|00001',
+  /// });
 
   // Current scanned drop point
   Map<String, dynamic>? _currentDropPoint;
@@ -28,8 +69,8 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
   // Track scanned item codes for current drop point
   final List<Map<String, String>> _scannedItems = [];
 
-  // Master list of all items scanned (for Kendaraan)
-  final List<Map<String, String>> _masterItemsList = [];
+  // Temporary storage for scanned items before confirmation
+  final List<Map<String, String>> _tempScannedItems = [];
 
   // Expected items for Toko drop point
   List<Map<String, String>> _expectedTokoItems = [];
@@ -53,6 +94,9 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
   // Audio player for success sound
   final AudioPlayer _audioPlayer = AudioPlayer();
 
+  // Mobile scanner controller
+  late MobileScannerController _scannerController;
+
   bool _isLoadingData = true;
   bool _canScan = true;
 
@@ -61,7 +105,44 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
   @override
   void initState() {
     super.initState();
+    _scannerController = MobileScannerController(
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      autoStart: false,
+    );
     _loadDropPoints();
+
+    // Start the scanner after a short delay to avoid conflicts
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _scannerController.start();
+      }
+    });
+
+    // If coming from tracking, auto-load the drop point after data loads
+    if (widget.fromTracking && widget.dropPointCode != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _autoLoadDropPoint();
+      });
+    }
+  }
+
+  void _autoLoadDropPoint() {
+    if (!mounted || _dropPoints.isEmpty) return;
+
+    final dropPoint = _dropPoints.firstWhere(
+      (dp) => dp['code'] == widget.dropPointCode,
+      orElse: () => {},
+    );
+
+    if (dropPoint.isNotEmpty) {
+      setState(() {
+        _currentDropPoint = dropPoint;
+      });
+      _showTopMessage(
+        'Scanning for ${dropPoint['code']} - ${dropPoint['name']}',
+        Colors.blue,
+      );
+    }
   }
 
   @override
@@ -69,6 +150,7 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
     _overlayEntry?.remove();
     _overlayEntry = null;
     _audioPlayer.dispose();
+    _scannerController.dispose();
     super.dispose();
   }
 
@@ -173,7 +255,7 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
         if (dropPoint.isNotEmpty) {
           // For Toko category, check if there are items for this drop point
           if (dropPoint['category'] == 'Toko') {
-            final itemsForToko = _masterItemsList
+            final itemsForToko = _scannedItemsController.masterItemsList
                 .where((item) => item['drop_point_code'] == dropPoint['code'])
                 .toList();
 
@@ -368,10 +450,10 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
                   (_invoiceSizeActualCounts[_currentSectionIndex]![invoiceCode]![itemSize] ??
                       0) +
                   1;
-              // Add to master list
-              _masterItemsList.add(itemData);
             }
             _scannedItems.add(itemData);
+            // Store temporarily, will be saved to global state on confirm
+            _tempScannedItems.add(itemData);
           });
 
           // Show feedback
@@ -485,7 +567,11 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
         }
       }
 
-      // All invoices complete, move to next section or finish
+      // All invoices complete, save items to global state and move to next section or finish
+      // Save all temp items for this section to global state
+      _scannedItemsController.addScannedItems(_tempScannedItems);
+      _tempScannedItems.clear();
+
       if (_currentSectionIndex < _routePoints.length - 1) {
         setState(() {
           _currentSectionIndex++;
@@ -521,6 +607,11 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
                     _invoiceSizeExpectedCounts = {};
                     _invoiceSizeActualCounts = {};
                   });
+
+                  // If from tracking, return to tracking screen
+                  if (widget.fromTracking) {
+                    Navigator.of(context).pop(true);
+                  }
                 },
                 child: const Text('OK'),
               ),
@@ -544,10 +635,11 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
         return;
       }
 
-      // Remove scanned items from master list
-      for (final scannedItem in _scannedItems) {
-        _masterItemsList.removeWhere(
-          (item) => item['full_code'] == scannedItem['full_code'],
+      log(_currentDropPoint.toString());
+      // Remove items for this drop point from global state (before clearing local list)
+      if (_currentDropPoint != null) {
+        _scannedItemsController.removeItemsForDropPoint(
+          _currentDropPoint?['code'],
         );
       }
 
@@ -570,6 +662,11 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
                   _currentRouteName = null;
                   _expectedTokoItems = [];
                 });
+
+                // If from tracking, return to tracking screen
+                if (widget.fromTracking) {
+                  Navigator.of(context).pop(true);
+                }
               },
               child: const Text('OK'),
             ),
@@ -581,11 +678,8 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
 
   void _cancelScanning() {
     setState(() {
-      // If cancelling from Kendaraan, clear all master items
-      if (_currentDropPoint != null &&
-          _currentDropPoint!['category'] == 'Kendaraan') {
-        _masterItemsList.clear();
-      }
+      // Clear temporary items (they were never saved to global state)
+      _tempScannedItems.clear();
 
       _currentDropPoint = null;
       _scannedItems.clear();
@@ -618,6 +712,9 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
           _scannedItems.removeWhere(
             (item) => item['drop_point_code'] == currentDropPointCode,
           );
+
+          // Also remove from global state
+          _scannedItemsController.removeItemsForDropPoint(currentDropPointCode);
 
           // Play success sound
           _audioPlayer.play(AssetSource('sounds/success.mp3'));
@@ -741,7 +838,13 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
       backgroundColor: Colors.black,
       body: Column(
         children: [
-          Expanded(flex: 1, child: MobileScanner(onDetect: _handleBarcode)),
+          Expanded(
+            flex: 1,
+            child: MobileScanner(
+              controller: _scannerController,
+              onDetect: _handleBarcode,
+            ),
+          ),
           Expanded(
             flex: 2,
             child: Container(
@@ -755,13 +858,135 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (_currentDropPoint == null)
-                          const Text(
-                            'Scan Drop Point (Kendaraan/Toko)',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
+                        if (widget.fromTracking)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
                             ),
+                            margin: const EdgeInsets.only(bottom: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.blue,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.navigation,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Tracking Mode: ${widget.dropPointCode}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        if (_currentDropPoint == null)
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Expanded(
+                                    child: Text(
+                                      'Scan Drop Point (Kendaraan/Toko)',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  Obx(
+                                    () =>
+                                        _scannedItemsController
+                                                .totalItemsCount >
+                                            0
+                                        ? TextButton.icon(
+                                            onPressed: () {
+                                              showDialog(
+                                                context: context,
+                                                builder: (BuildContext context) {
+                                                  return AlertDialog(
+                                                    title: const Row(
+                                                      children: [
+                                                        Icon(
+                                                          Icons.warning,
+                                                          color: Colors.orange,
+                                                          size: 28,
+                                                        ),
+                                                        SizedBox(width: 8),
+                                                        Text('Clear All Items'),
+                                                      ],
+                                                    ),
+                                                    content: Text(
+                                                      'Are you sure you want to clear all ${_scannedItemsController.totalItemsCount} scanned items? This action cannot be undone.',
+                                                    ),
+                                                    actions: [
+                                                      TextButton(
+                                                        onPressed: () {
+                                                          Navigator.of(
+                                                            context,
+                                                          ).pop();
+                                                        },
+                                                        child: const Text(
+                                                          'Cancel',
+                                                        ),
+                                                      ),
+                                                      ElevatedButton(
+                                                        onPressed: () {
+                                                          _scannedItemsController
+                                                              .clearAll();
+                                                          Navigator.of(
+                                                            context,
+                                                          ).pop();
+                                                          _showTopMessage(
+                                                            'All scanned items cleared',
+                                                            Colors.orange,
+                                                          );
+                                                        },
+                                                        style:
+                                                            ElevatedButton.styleFrom(
+                                                              backgroundColor:
+                                                                  Colors.red,
+                                                              foregroundColor:
+                                                                  Colors.white,
+                                                            ),
+                                                        child: const Text(
+                                                          'Clear All',
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  );
+                                                },
+                                              );
+                                            },
+                                            icon: const Icon(
+                                              Icons.delete_sweep,
+                                              size: 20,
+                                            ),
+                                            label: Text(
+                                              'Clear All (${_scannedItemsController.totalItemsCount})',
+                                            ),
+                                            style: TextButton.styleFrom(
+                                              foregroundColor: Colors.red,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 8,
+                                                  ),
+                                            ),
+                                          )
+                                        : const SizedBox.shrink(),
+                                  ),
+                                ],
+                              ),
+                            ],
                           )
                         else
                           Column(
@@ -829,64 +1054,6 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
                                     const SizedBox(height: 8),
                                   ],
                                 ),
-                              // Row(
-                              //   children: [
-                              //     Container(
-                              //       padding: const EdgeInsets.symmetric(
-                              //         horizontal: 12,
-                              //         vertical: 6,
-                              //       ),
-                              //       decoration: BoxDecoration(
-                              //         color: Colors.blue,
-                              //         borderRadius: BorderRadius.circular(12),
-                              //       ),
-                              //       child: Text(
-                              //         _currentDropPoint!['category'] ==
-                              //                 'Kendaraan'
-                              //             ? '${(_sectionItems[_currentSectionIndex] ?? []).length} items in section'
-                              //             : '${_scannedItems.length} items scanned',
-                              //         style: const TextStyle(
-                              //           color: Colors.white,
-                              //           fontWeight: FontWeight.bold,
-                              //         ),
-                              //       ),
-                              //     ),
-                              //     if (_currentDropPoint!['category'] ==
-                              //             'Kendaraan' &&
-                              //         _sectionExpectedCounts.containsKey(
-                              //           _currentSectionIndex,
-                              //         ))
-                              //       Padding(
-                              //         padding: const EdgeInsets.only(left: 8),
-                              //         child: Container(
-                              //           padding: const EdgeInsets.symmetric(
-                              //             horizontal: 12,
-                              //             vertical: 6,
-                              //           ),
-                              //           decoration: BoxDecoration(
-                              //             color:
-                              //                 (_sectionItems[_currentSectionIndex] ??
-                              //                             [])
-                              //                         .length >=
-                              //                     (_sectionExpectedCounts[_currentSectionIndex] ??
-                              //                         0)
-                              //                 ? Colors.green
-                              //                 : Colors.orange,
-                              //             borderRadius: BorderRadius.circular(
-                              //               12,
-                              //             ),
-                              //           ),
-                              //           child: Text(
-                              //             'Total Items: ${(_sectionItems[_currentSectionIndex] ?? []).length} / ${_sectionExpectedCounts[_currentSectionIndex]}',
-                              //             style: const TextStyle(
-                              //               color: Colors.white,
-                              //               fontWeight: FontWeight.bold,
-                              //             ),
-                              //           ),
-                              //         ),
-                              //       ),
-                              //   ],
-                              // ),
                             ],
                           ),
                       ],
@@ -900,6 +1067,8 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
                             itemCount: _dropPoints.length,
                             itemBuilder: (context, index) {
                               final dropPoint = _dropPoints[index];
+                              final itemCount = _scannedItemsController
+                                  .getCountForDropPoint(dropPoint['code']);
                               return ListTile(
                                 leading: Icon(
                                   dropPoint['category'] == 'Kendaraan'
@@ -914,6 +1083,28 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
                                   ),
                                 ),
                                 subtitle: Text(dropPoint['category']),
+                                trailing: itemCount > 0
+                                    ? Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 6,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green,
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '$itemCount items',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      )
+                                    : null,
                               );
                             },
                           )
@@ -1495,7 +1686,8 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
                                   // For Toko, load expected items
                                   if (_currentDropPoint!['category'] ==
                                       'Toko') {
-                                    _expectedTokoItems = _masterItemsList
+                                    _expectedTokoItems = _scannedItemsController
+                                        .masterItemsList
                                         .where(
                                           (item) =>
                                               item['drop_point_code'] ==

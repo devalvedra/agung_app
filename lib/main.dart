@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'screens/home_screen.dart';
 import 'screens/orders_screen.dart';
 import 'screens/tracking_screen.dart';
@@ -14,7 +15,7 @@ class MainApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return GetMaterialApp(
       title: 'Delivery App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),

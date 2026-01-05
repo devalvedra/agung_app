@@ -27,7 +27,6 @@ class _MultipleCodeScannerState extends State<MultipleCodeScanner> {
 
     for (final barcode in barcodes.barcodes) {
       final code = barcode.displayValue ?? barcode.rawValue;
-      print(code);
 
       if (code != null &&
           code.isNotEmpty &&

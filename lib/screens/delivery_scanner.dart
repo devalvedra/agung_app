@@ -319,29 +319,18 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
           final category = _currentDropPoint!['category'];
 
           if (category == 'Kendaraan') {
-            // For Kendaraan: check route_code consistency and initialize sections
+            // For Kendaraan: check route_code consistency
             if (_currentRouteCode == null) {
               // First item overall, store the route_code
               _currentRouteCode = itemData['route_code'];
 
-              // Find and store route name and route points
+              // Find and store route name only
               final route = _routes.firstWhere(
                 (r) => r['code'] == _currentRouteCode,
                 orElse: () => {},
               );
               if (route.isNotEmpty) {
                 _currentRouteName = route['name'];
-                // Get route points, excluding sequence 1
-                final allPoints = List<Map<String, dynamic>>.from(
-                  route['route_points'] ?? [],
-                );
-                _routePoints = allPoints
-                    .where((rp) => rp['sequence'] != 1)
-                    .toList();
-                _routePoints.sort(
-                  (a, b) =>
-                      (a['sequence'] as int).compareTo(b['sequence'] as int),
-                );
               }
             } else if (_currentRouteCode != itemData['route_code']) {
               // Route code doesn't match
@@ -353,19 +342,52 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
               continue;
             }
 
-            // Check if item's drop_point_code matches current section
-            if (_routePoints.isNotEmpty) {
-              final currentRoutePoint = _routePoints[_currentSectionIndex];
-              if (itemData['drop_point_code'] !=
-                  currentRoutePoint['drop_point_code']) {
-                _showTopMessage(
-                  '✗ Item ini untuk ${itemData['drop_point_code']}, sedang scan untuk ${currentRoutePoint['drop_point_code']}',
-                  Colors.red,
-                );
-                _addScanDelay();
-                continue;
-              }
+            // Dynamically add drop point as a section if it's new
+            final dropPointCode = itemData['drop_point_code'];
 
+            // Find if this drop point already exists in route points
+            int sectionIndex = _routePoints.indexWhere(
+              (rp) => rp['drop_point_code'] == dropPointCode,
+            );
+
+            if (sectionIndex == -1) {
+              // This is a new drop point, add it to route points
+              final route = _routes.firstWhere(
+                (r) => r['code'] == _currentRouteCode,
+                orElse: () => {},
+              );
+
+              if (route.isNotEmpty) {
+                final allPoints = List<Map<String, dynamic>>.from(
+                  route['route_points'] ?? [],
+                );
+                final routePoint = allPoints.firstWhere(
+                  (rp) =>
+                      rp['drop_point_code'] == dropPointCode &&
+                      rp['sequence'] != 1,
+                  orElse: () => {},
+                );
+
+                if (routePoint.isNotEmpty) {
+                  _routePoints.add(routePoint);
+                  // Sort by sequence
+                  _routePoints.sort(
+                    (a, b) =>
+                        (a['sequence'] as int).compareTo(b['sequence'] as int),
+                  );
+                  // Update section index after sorting
+                  sectionIndex = _routePoints.indexWhere(
+                    (rp) => rp['drop_point_code'] == dropPointCode,
+                  );
+                  _currentSectionIndex = sectionIndex;
+                }
+              }
+            } else {
+              // Section exists, update current section if needed
+              _currentSectionIndex = sectionIndex;
+            }
+
+            if (sectionIndex != -1) {
               final invoiceCode = itemData['invoice_code'] ?? '';
 
               // Initialize tracking for this section and invoice if needed
@@ -582,23 +604,22 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
           Colors.green,
         );
       } else {
-        // All sections complete
+        // All current sections complete, but stay in Kendaraan category for new drop points
         showDialog(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('All Sections Complete'),
+            title: const Text('Sections Complete'),
             content: Text(
-              'All ${_routePoints.length} sections completed with ${_scannedItems.length} total items',
+              'All ${_routePoints.length} sections completed with ${_scannedItems.length} total items.\n\nYou can continue scanning items for additional drop points in the same route.',
             ),
             actions: [
               TextButton(
                 onPressed: () {
                   Navigator.pop(context);
                   setState(() {
-                    _currentDropPoint = null;
+                    // Keep _currentDropPoint and _currentRouteCode to stay in Kendaraan category
+                    // Only clear section-specific data
                     _scannedItems.clear();
-                    _currentRouteCode = null;
-                    _currentRouteName = null;
                     _routePoints = [];
                     _currentSectionIndex = 0;
                     _sectionInvoiceItems = {};
@@ -678,11 +699,17 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
 
   void _cancelScanning() {
     setState(() {
+      // Remove only the temporary scanned items (not yet confirmed) from _scannedItems
+      for (final tempItem in _tempScannedItems) {
+        _scannedItems.removeWhere(
+          (item) => item['full_code'] == tempItem['full_code'],
+        );
+      }
+
       // Clear temporary items (they were never saved to global state)
       _tempScannedItems.clear();
 
       _currentDropPoint = null;
-      _scannedItems.clear();
       _currentRouteCode = null;
       _currentRouteName = null;
       _routePoints = [];

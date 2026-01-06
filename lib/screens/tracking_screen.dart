@@ -888,6 +888,12 @@ class _TrackingScreenState extends State<TrackingScreen> {
         validPoints[_trackingController.currentSegmentIndex.value + 1];
     final dropPointCode =
         currentPoint['drop_point_code']?.toString() ?? 'Destination';
+    final dropPointName =
+        currentPoint['drop_point_name']?.toString() ?? dropPointCode;
+
+    // Check if destination is Head Office
+    final isHeadOffice =
+        dropPointCode == 'HO' || dropPointName == 'Head Office';
 
     showDialog(
       context: context,
@@ -902,33 +908,41 @@ class _TrackingScreenState extends State<TrackingScreen> {
             ],
           ),
           content: Text(
-            'You have arrived at $dropPointCode.\n\nPlease scan the drop point code and items to complete this delivery.',
+            isHeadOffice
+                ? 'You have arrived at $dropPointName.'
+                : 'You have arrived at $dropPointName.\n\nPlease scan the drop point code and items to complete this delivery.',
           ),
           actions: [
             ElevatedButton(
               onPressed: () async {
                 Navigator.of(context).pop();
-                // Navigate directly to DeliveryScanner
-                final result = await Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (context) => DeliveryScanner(
-                      fromTracking: true,
-                      dropPointCode: dropPointCode,
-                      currentPoint: currentPoint,
-                    ),
-                  ),
-                );
 
-                // After returning from scanning, proceed to next segment
-                if (result == true) {
+                if (isHeadOffice) {
+                  // Skip scanning for Head Office, proceed directly to next segment
                   _proceedToNextSegment(validPoints);
+                } else {
+                  // Navigate to DeliveryScanner for other drop points
+                  final result = await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => DeliveryScanner(
+                        fromTracking: true,
+                        dropPointCode: dropPointCode,
+                        currentPoint: currentPoint,
+                      ),
+                    ),
+                  );
+
+                  // After returning from scanning, proceed to next segment
+                  if (result == true) {
+                    _proceedToNextSegment(validPoints);
+                  }
                 }
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green,
                 foregroundColor: Colors.white,
               ),
-              child: const Text('Drop Items'),
+              child: Text(isHeadOffice ? 'Continue' : 'Drop Items'),
             ),
           ],
         );

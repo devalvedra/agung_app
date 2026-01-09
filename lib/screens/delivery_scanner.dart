@@ -7,6 +7,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
 import 'package:get/get.dart';
 import '../controllers/scanned_items_controller.dart';
+import 'proof_capture_screen.dart';
 
 /// Implementation of Mobile Scanner example with multiple code scanning
 class DeliveryScanner extends StatefulWidget {
@@ -239,6 +240,9 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
 
   void _handleBarcode(BarcodeCapture barcodes) {
     if (!mounted || !_canScan) return;
+
+    // Disable scanning when confirmation dialog is shown
+    if (_pendingDropPoint != null) return;
 
     for (final barcode in barcodes.barcodes) {
       final code = barcode.displayValue ?? barcode.rawValue;
@@ -496,7 +500,7 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
     }
   }
 
-  void _confirmItems() {
+  Future<void> _confirmItems() async {
     final category = _currentDropPoint!['category'];
 
     if (category == 'Kendaraan') {
@@ -664,36 +668,47 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
         );
       }
 
-      // Show confirmation dialog
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Items Confirmed'),
-          content: Text(
-            '${_scannedItems.length} items confirmed and delivered to ${_currentDropPoint!['code']}',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                setState(() {
-                  _currentDropPoint = null;
-                  _scannedItems.clear();
-                  _currentRouteCode = null;
-                  _currentRouteName = null;
-                  _expectedTokoItems = [];
-                });
+      // Collect invoice numbers from scanned items
+      final invoiceNumbers = _scannedItems
+          .map((item) => item['invoice_code'] ?? '')
+          .where((inv) => inv.isNotEmpty)
+          .toSet()
+          .toList();
 
-                // If from tracking, return to tracking screen
-                if (widget.fromTracking) {
-                  Navigator.of(context).pop(true);
-                }
-              },
-              child: const Text('OK'),
-            ),
-          ],
+      final dropPointCode = _currentDropPoint!['code'];
+      final itemCount = _scannedItems.length;
+
+      // Navigate to proof capture screen
+      final result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ProofCaptureScreen(
+            dropPointCode: dropPointCode,
+            invoiceNumbers: invoiceNumbers,
+          ),
         ),
       );
+
+      if (result == true && mounted) {
+        // Show success message
+        _showTopMessage(
+          '✓ $itemCount items delivered to $dropPointCode with proof',
+          Colors.green,
+        );
+
+        setState(() {
+          _currentDropPoint = null;
+          _scannedItems.clear();
+          _currentRouteCode = null;
+          _currentRouteName = null;
+          _expectedTokoItems = [];
+        });
+
+        // If from tracking, return to tracking screen
+        if (widget.fromTracking) {
+          Navigator.of(context).pop(true);
+        }
+      }
     }
   }
 

@@ -12,7 +12,7 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'Mobile Scanner Example',
+          'Mobile Scanner',
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         centerTitle: true,

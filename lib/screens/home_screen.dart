@@ -2,6 +2,7 @@ import 'package:delivery_app/screens/mobile_scanner_advanced.dart';
 import 'package:delivery_app/screens/mobile_scanner_simple.dart';
 import 'package:delivery_app/screens/multiple_code_scanner.dart';
 import 'package:delivery_app/screens/delivery_scanner.dart';
+import 'package:delivery_app/screens/pickup_item_master_screen.dart';
 import 'package:flutter/material.dart';
 
 class HomeScreen extends StatelessWidget {

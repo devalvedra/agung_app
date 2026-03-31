@@ -3,19 +3,29 @@ import '../screens/home_screen.dart';
 import '../screens/orders_screen.dart';
 import '../screens/tracking_screen.dart';
 import '../screens/profile_screen.dart';
+import '../screens/pickup_item_screen.dart';
 
 class MainNavigationScreen extends StatefulWidget {
-  const MainNavigationScreen({super.key});
+  final int initialIndex;
+
+  const MainNavigationScreen({super.key, this.initialIndex = 0});
 
   @override
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
 }
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
-  int _currentIndex = 0;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+  }
 
   final List<Widget> _screens = [
     const HomeScreen(),
+    const PickupItemScreen(),
     const TrackingScreen(),
     const OrdersScreen(),
     const ProfileScreen(),
@@ -37,6 +47,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         unselectedItemColor: Colors.grey,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.qr_code_scanner),
+            label: 'Pickup',
+          ),
           BottomNavigationBarItem(
             icon: Icon(Icons.location_on),
             label: 'Tracking',

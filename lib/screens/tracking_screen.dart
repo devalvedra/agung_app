@@ -10,6 +10,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import '../constants/app_constants.dart';
 import '../controllers/tracking_controller.dart';
+import '../services/firebase_location_service.dart';
 import 'delivery_scanner.dart';
 
 class TrackingScreen extends StatefulWidget {
@@ -38,6 +39,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
   List<LatLng> _routeCoordinates = [];
   Position? _currentPosition;
   StreamSubscription<Position>? _positionStreamSubscription;
+  final FirebaseLocationService _firebaseLocationService =
+      FirebaseLocationService();
+  Timer? _firebaseSyncTimer;
 
   @override
   void initState() {
@@ -121,6 +125,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
   void dispose() {
     _animationTimer?.cancel();
     _positionStreamSubscription?.cancel();
+    _firebaseSyncTimer?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
@@ -317,6 +322,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
       );
       _buildMarkersAndPolylines();
     }
+
+    // Save route to Firebase
+    _saveRouteToFirebase();
   }
 
   void _buildMarkersAndPolylines() {
@@ -776,6 +784,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
       _animationTimer?.cancel();
       _positionStreamSubscription?.cancel();
     });
+
+    // Stop Firebase sync
+    _stopFirebaseSync();
+    _updateFirebaseTruckStatus('stopped');
   }
 
   void _startGpsTracking() {
@@ -784,6 +796,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
     setState(() {
       _trackingController.setAnimatingState(true);
     });
+
+    // Start Firebase sync
+    _startFirebaseSync();
+    _updateFirebaseTruckStatus('tracking');
 
     // Start listening to GPS position updates
     _positionStreamSubscription =
@@ -841,6 +857,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   void _startSimulation() {
+    // Start Firebase sync for simulation mode
+    _startFirebaseSync();
+    _updateFirebaseTruckStatus('simulating');
+
     _startTruckAnimation();
   }
 
@@ -871,6 +891,92 @@ class _TrackingScreenState extends State<TrackingScreen> {
         ),
       ),
     );
+  }
+
+  /// Initialize Firebase location service with truck ID
+  void _initializeFirebaseService() {
+    // In production, get this from authentication/user profile
+    // For now, using a default truck ID
+    final truckId = 'truck_001'; // TODO: Get from authentication
+    _firebaseLocationService.initialize(truckId);
+  }
+
+  /// Start syncing location to Firebase periodically
+  void _startFirebaseSync() {
+    // Cancel existing timer if any
+    _firebaseSyncTimer?.cancel();
+
+    // Initialize Firebase service
+    _initializeFirebaseService();
+
+    // Sync location every 5 seconds
+    _firebaseSyncTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      _syncLocationToFirebase();
+    });
+
+    // Also sync immediately
+    _syncLocationToFirebase();
+  }
+
+  /// Stop syncing location to Firebase
+  void _stopFirebaseSync() {
+    _firebaseSyncTimer?.cancel();
+  }
+
+  /// Sync current location to Firebase
+  Future<void> _syncLocationToFirebase() async {
+    if (_trackingController.truckPosition.value == null ||
+        _trackingController.selectedRoute.value == null) {
+      return;
+    }
+
+    try {
+      await _firebaseLocationService.saveLocation(
+        position: _trackingController.truckPosition.value!,
+        routeCode: _trackingController.selectedRouteCode.value,
+        segmentIndex: _trackingController.currentSegmentIndex.value,
+        bearing: _trackingController.truckRotation.value,
+        isSimulation: _trackingController.isSimulationMode.value,
+      );
+    } catch (e) {
+      debugPrint('Error syncing location to Firebase: $e');
+      // Don't show error to user to avoid interrupting tracking
+    }
+  }
+
+  /// Save route info to Firebase when route is selected
+  Future<void> _saveRouteToFirebase() async {
+    if (_trackingController.selectedRoute.value == null) return;
+
+    try {
+      final route = _trackingController.selectedRoute.value!;
+      final routePoints = List<Map<String, dynamic>>.from(
+        route['route_points'] ?? [],
+      );
+
+      await _firebaseLocationService.saveRouteInfo(
+        routeCode: route['code'] ?? '',
+        routeName: route['name'] ?? '',
+        routePoints: routePoints,
+      );
+    } catch (e) {
+      debugPrint('Error saving route to Firebase: $e');
+    }
+  }
+
+  /// Update truck status in Firebase
+  Future<void> _updateFirebaseTruckStatus(String status) async {
+    try {
+      await _firebaseLocationService.updateTruckStatus(
+        status: status,
+        additionalData: {
+          'routeCode': _trackingController.selectedRouteCode.value,
+          'segmentIndex': _trackingController.currentSegmentIndex.value,
+        },
+      );
+    } catch (e) {
+      debugPrint('Error updating truck status: $e');
+    }
   }
 
   void _showArrivalAlert() {
@@ -919,6 +1025,15 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
                 if (isHeadOffice) {
                   // Skip scanning for Head Office, proceed directly to next segment
+                  // Mark delivery as completed in Firebase
+                  final lat = double.tryParse(currentPoint['lat'].toString());
+                  final lng = double.tryParse(currentPoint['lng'].toString());
+                  if (lat != null && lng != null) {
+                    await _firebaseLocationService.markDeliveryCompleted(
+                      dropPointCode: dropPointCode,
+                      location: LatLng(lat, lng),
+                    );
+                  }
                   _proceedToNextSegment(validPoints);
                 } else {
                   // Navigate to DeliveryScanner for other drop points
@@ -934,6 +1049,15 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
                   // After returning from scanning, proceed to next segment
                   if (result == true) {
+                    // Mark delivery as completed in Firebase
+                    final lat = double.tryParse(currentPoint['lat'].toString());
+                    final lng = double.tryParse(currentPoint['lng'].toString());
+                    if (lat != null && lng != null) {
+                      await _firebaseLocationService.markDeliveryCompleted(
+                        dropPointCode: dropPointCode,
+                        location: LatLng(lat, lng),
+                      );
+                    }
                     _proceedToNextSegment(validPoints);
                   }
                 }
@@ -999,6 +1123,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
+                // End route in Firebase
+                _firebaseLocationService.endRoute();
+                _stopFirebaseSync();
                 // Clear the selected route and reset state
                 setState(() {
                   _trackingController.resetTracking();

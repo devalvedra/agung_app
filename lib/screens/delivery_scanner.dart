@@ -1,7 +1,6 @@
-import 'dart:convert';
 import 'dart:developer';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
@@ -32,10 +31,6 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
   final ScannedItemsController _scannedItemsController = Get.put(
     ScannedItemsController(),
   );
-
-  // Drop point data from JSON
-  List<Map<String, dynamic>> _dropPoints = [];
-  List<Map<String, dynamic>> _routes = [];
 
   /// Scanned item format:
   /// {
@@ -98,10 +93,13 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
   // Mobile scanner controller
   late MobileScannerController _scannerController;
 
-  bool _isLoadingData = true;
   bool _canScan = true;
 
   OverlayEntry? _overlayEntry;
+
+  // Debug mode state
+  bool _debugMode = true; // Set to false to disable debug button
+  String? _debugSelectedCategory; // 'Kendaraan' or 'Toko'
 
   @override
   void initState() {
@@ -110,40 +108,27 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
       detectionSpeed: DetectionSpeed.noDuplicates,
       autoStart: false,
     );
-    _loadDropPoints();
 
     // Start the scanner after a short delay to avoid conflicts
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _scannerController.start();
+        // If coming from tracking, auto-load the drop point
+        if (widget.fromTracking && widget.dropPointCode != null) {
+          _autoLoadDropPoint();
+        }
       }
     });
-
-    // If coming from tracking, auto-load the drop point after data loads
-    if (widget.fromTracking && widget.dropPointCode != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _autoLoadDropPoint();
-      });
-    }
   }
 
   void _autoLoadDropPoint() {
-    if (!mounted || _dropPoints.isEmpty) return;
-
-    final dropPoint = _dropPoints.firstWhere(
-      (dp) => dp['code'] == widget.dropPointCode,
-      orElse: () => {},
-    );
-
-    if (dropPoint.isNotEmpty) {
-      setState(() {
-        _currentDropPoint = dropPoint;
-      });
-      _showTopMessage(
-        'Scanning for ${dropPoint['code']} - ${dropPoint['name']}',
-        Colors.blue,
-      );
-    }
+    if (!mounted) return;
+    final code = widget.dropPointCode!;
+    final dropPoint = {'code': code, 'category': _getCategoryFromCode(code)};
+    setState(() {
+      _currentDropPoint = dropPoint;
+    });
+    _showTopMessage('Scanning for $code', Colors.blue);
   }
 
   @override
@@ -217,25 +202,11 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
     });
   }
 
-  Future<void> _loadDropPoints() async {
-    try {
-      final String jsonString = await rootBundle.loadString(
-        'lib/constants/dummy_data.json',
-      );
-      final Map<String, dynamic> data = json.decode(jsonString);
-      setState(() {
-        _dropPoints = List<Map<String, dynamic>>.from(data['drop_point'] ?? []);
-        _routes = List<Map<String, dynamic>>.from(data['route'] ?? []);
-        _isLoadingData = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isLoadingData = false;
-      });
-      if (mounted) {
-        _showTopMessage('Error loading data: $e', Colors.red);
-      }
-    }
+  /// Determines category from drop point code prefix:
+  /// codes starting with 'K-' → 'Kendaraan', 'T-' → 'Toko'
+  String _getCategoryFromCode(String code) {
+    if (code.toUpperCase().startsWith('K-')) return 'Kendaraan';
+    return 'Toko';
   }
 
   void _handleBarcode(BarcodeCapture barcodes) {
@@ -249,23 +220,20 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
 
       if (code == null || code.isEmpty) continue;
 
-      // If no drop point is selected, check if scanned code is a drop point
+      // If no drop point is selected, treat any non-item code as a drop point
       if (_currentDropPoint == null && _pendingDropPoint == null) {
-        final dropPoint = _dropPoints.firstWhere(
-          (dp) => dp['code'] == code,
-          orElse: () => {},
-        );
+        if (!code.contains('INV')) {
+          final category = _getCategoryFromCode(code);
 
-        if (dropPoint.isNotEmpty) {
           // For Toko category, check if there are items for this drop point
-          if (dropPoint['category'] == 'Toko') {
+          if (category == 'Toko') {
             final itemsForToko = _scannedItemsController.masterItemsList
-                .where((item) => item['drop_point_code'] == dropPoint['code'])
+                .where((item) => item['drop_point_code'] == code)
                 .toList();
 
             if (itemsForToko.isEmpty) {
               _showTopMessage(
-                '✗ No items found for ${dropPoint['code']}. Please scan Kendaraan first.',
+                '✗ No items found for $code. Please scan Kendaraan first.',
                 Colors.red,
               );
               _addScanDelay();
@@ -275,7 +243,7 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
 
           // Set pending drop point for confirmation
           setState(() {
-            _pendingDropPoint = dropPoint;
+            _pendingDropPoint = {'code': code, 'category': category};
           });
 
           // Play success sound
@@ -327,15 +295,6 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
             if (_currentRouteCode == null) {
               // First item overall, store the route_code
               _currentRouteCode = itemData['route_code'];
-
-              // Find and store route name only
-              final route = _routes.firstWhere(
-                (r) => r['code'] == _currentRouteCode,
-                orElse: () => {},
-              );
-              if (route.isNotEmpty) {
-                _currentRouteName = route['name'];
-              }
             } else if (_currentRouteCode != itemData['route_code']) {
               // Route code doesn't match
               _showTopMessage(
@@ -355,37 +314,10 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
             );
 
             if (sectionIndex == -1) {
-              // This is a new drop point, add it to route points
-              final route = _routes.firstWhere(
-                (r) => r['code'] == _currentRouteCode,
-                orElse: () => {},
-              );
-
-              if (route.isNotEmpty) {
-                final allPoints = List<Map<String, dynamic>>.from(
-                  route['route_points'] ?? [],
-                );
-                final routePoint = allPoints.firstWhere(
-                  (rp) =>
-                      rp['drop_point_code'] == dropPointCode &&
-                      rp['sequence'] != 1,
-                  orElse: () => {},
-                );
-
-                if (routePoint.isNotEmpty) {
-                  _routePoints.add(routePoint);
-                  // Sort by sequence
-                  _routePoints.sort(
-                    (a, b) =>
-                        (a['sequence'] as int).compareTo(b['sequence'] as int),
-                  );
-                  // Update section index after sorting
-                  sectionIndex = _routePoints.indexWhere(
-                    (rp) => rp['drop_point_code'] == dropPointCode,
-                  );
-                  _currentSectionIndex = sectionIndex;
-                }
-              }
+              // New drop point encountered, add it as a new section
+              _routePoints.add({'drop_point_code': dropPointCode});
+              sectionIndex = _routePoints.length - 1;
+              _currentSectionIndex = sectionIndex;
             } else {
               // Section exists, update current section if needed
               _currentSectionIndex = sectionIndex;
@@ -609,6 +541,30 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
         );
       } else {
         // All current sections complete, but stay in Kendaraan category for new drop points
+
+        // Send put request to update the delivery status
+        final invoiceCodes = _scannedItems
+            .map((item) => item['invoice_code'] ?? '')
+            .where((inv) => inv.isNotEmpty)
+            .toSet();
+        for (final invoiceCode in invoiceCodes) {
+          try {
+            final uri = Uri.parse(
+              'http://10.14.225.210:8000/api/delivery/$invoiceCode/status',
+            );
+            await http.put(
+              uri,
+              body: {
+                'vehicle_no': _currentDropPoint?['code'],
+                'username': 'Aling',
+                'status': 'Menunggu Supir',
+              },
+            );
+          } catch (e) {
+            log('Failed to update status for $invoiceCode: $e');
+          }
+        }
+
         showDialog(
           context: context,
           builder: (context) => AlertDialog(
@@ -660,7 +616,6 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
         return;
       }
 
-      log(_currentDropPoint.toString());
       // Remove items for this drop point from global state (before clearing local list)
       if (_currentDropPoint != null) {
         _scannedItemsController.removeItemsForDropPoint(
@@ -760,6 +715,9 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
 
           // Play success sound
           _audioPlayer.play(AssetSource('sounds/success.mp3'));
+
+          // clear all drop point
+          _routePoints.clear();
         }
       } else {
         // Clear all for Toko
@@ -835,6 +793,178 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
     });
   }
 
+  void _debugAutoAddItems() {
+    if (_currentDropPoint == null) {
+      _showTopMessage('Please select a drop point first', Colors.orange);
+      return;
+    }
+
+    final category = _currentDropPoint!['category'];
+
+    if (category == 'Kendaraan') {
+      // Auto-add items for Kendaraan category
+      if (_routePoints.isEmpty) {
+        // Create a default section using the current drop point code
+        final defaultCode = 'apo-rahayu-farma';
+        _routePoints.add({'drop_point_code': defaultCode});
+        _currentRouteCode ??= 'DEBUG';
+        _currentSectionIndex = 0;
+        _expandedSectionIndex = 0;
+      }
+
+      final currentPoint = _routePoints[_currentSectionIndex];
+      print('currentPoint: $currentPoint');
+      final dropPointCode = currentPoint['drop_point_code'] as String;
+
+      // Generate 3 sample items with different sizes
+      // List<Map<String, String>> sampleItems = [
+      //   {
+      //     'invoice_code': 'INV001',
+      //     'route_code': _currentRouteCode ?? '',
+      //     'drop_point_code': dropPointCode,
+      //     'num_of_items': '3',
+      //     'item_size': '1',
+      //     'num_of_items_per_size': '3',
+      //     'index': '00001',
+      //     'full_code':
+      //         'INV001|${_currentRouteCode ?? ''}|$dropPointCode|3|1|3|00001',
+      //   },
+      //   {
+      //     'invoice_code': 'INV001',
+      //     'route_code': _currentRouteCode ?? '',
+      //     'drop_point_code': dropPointCode,
+      //     'num_of_items': '3',
+      //     'item_size': '1',
+      //     'num_of_items_per_size': '3',
+      //     'index': '00002',
+      //     'full_code':
+      //         'INV001|${_currentRouteCode ?? ''}|$dropPointCode|3|1|3|00002',
+      //   },
+      //   {
+      //     'invoice_code': 'INV001',
+      //     'route_code': _currentRouteCode ?? '',
+      //     'drop_point_code': dropPointCode,
+      //     'num_of_items': '3',
+      //     'item_size': '1',
+      //     'num_of_items_per_size': '3',
+      //     'index': '00003',
+      //     'full_code':
+      //         'INV001|${_currentRouteCode ?? ''}|$dropPointCode|3|1|3|00003',
+      //   },
+      // ];
+
+      List<Map<String, String>> sampleItems = [
+        {
+          'invoice_code': 'INV-2026-03-30-0002',
+          'route_code': _currentRouteCode ?? '',
+          'drop_point_code': dropPointCode,
+          'num_of_items': '3',
+          'item_size': 'B',
+          'num_of_items_per_size': '1',
+          'index': '00001',
+          'full_code':
+              'INV-2026-03-30-0002|${_currentRouteCode ?? ''}|$dropPointCode|3|1|1|00001',
+        },
+        {
+          'invoice_code': 'INV-2026-03-30-0002',
+          'route_code': _currentRouteCode ?? '',
+          'drop_point_code': dropPointCode,
+          'num_of_items': '3',
+          'item_size': 'S',
+          'num_of_items_per_size': '1',
+          'index': '00002',
+          'full_code':
+              'INV-2026-03-30-0002|${_currentRouteCode ?? ''}|$dropPointCode|3|2|1|00002',
+        },
+        {
+          'invoice_code': 'INV-2026-03-30-0002',
+          'route_code': _currentRouteCode ?? '',
+          'drop_point_code': dropPointCode,
+          'num_of_items': '3',
+          'item_size': 'K',
+          'num_of_items_per_size': '1',
+          'index': '00003',
+          'full_code':
+              'INV-2026-03-30-0002|${_currentRouteCode ?? ''}|$dropPointCode|3|3|1|00003',
+        },
+      ];
+
+      setState(() {
+        // Initialize tracking for this section and invoice
+        final invoiceCode = 'INV-2026-03-30-0002';
+        _sectionInvoiceItems[_currentSectionIndex] ??= {};
+        _invoiceExpectedCounts[_currentSectionIndex] ??= {};
+        _invoiceSizeExpectedCounts[_currentSectionIndex] ??= {};
+        _invoiceSizeActualCounts[_currentSectionIndex] ??= {};
+
+        _invoiceExpectedCounts[_currentSectionIndex]![invoiceCode] = 3;
+        _invoiceSizeExpectedCounts[_currentSectionIndex]![invoiceCode] = {
+          'B': 1,
+          'S': 1,
+          'K': 1,
+        };
+        _invoiceSizeActualCounts[_currentSectionIndex]![invoiceCode] = {
+          'B': 0,
+          'S': 0,
+          'K': 0,
+        };
+
+        // Add all sample items
+        for (final item in sampleItems) {
+          _scannedItems.add(item);
+          _tempScannedItems.add(item);
+
+          // Add to section invoice items
+          _sectionInvoiceItems[_currentSectionIndex]![invoiceCode] = [
+            ...(_sectionInvoiceItems[_currentSectionIndex]![invoiceCode] ?? []),
+            item,
+          ];
+
+          // Increment size count
+          final itemSize = item['item_size']!;
+          _invoiceSizeActualCounts[_currentSectionIndex]![invoiceCode]![itemSize] =
+              (_invoiceSizeActualCounts[_currentSectionIndex]![invoiceCode]![itemSize] ??
+                  0) +
+              1;
+        }
+      });
+
+      _showTopMessage(
+        '✓ Debug: Added 3 items for INV-2026-03-30-0002',
+        Colors.blue,
+      );
+      _audioPlayer.play(AssetSource('sounds/success.mp3'));
+      Vibration.vibrate(duration: 100);
+    } else if (category == 'Toko') {
+      // Auto-add all expected items for Toko category
+      if (_expectedTokoItems.isEmpty) {
+        _showTopMessage('No expected items for this Toko', Colors.orange);
+        return;
+      }
+
+      setState(() {
+        for (final expectedItem in _expectedTokoItems) {
+          // Check if not already scanned
+          final alreadyScanned = _scannedItems.any(
+            (item) => item['full_code'] == expectedItem['full_code'],
+          );
+
+          if (!alreadyScanned) {
+            _scannedItems.add(expectedItem);
+            _tempScannedItems.add(expectedItem);
+          }
+        }
+      });
+
+      _showTopMessage(
+        '✓ Debug: Added ${_expectedTokoItems.length} items',
+        Colors.blue,
+      );
+      _audioPlayer.play(AssetSource('sounds/success.mp3'));
+      Vibration.vibrate(duration: 100);
+    }
+  }
+
   Widget _buildDropPointConfirmation() {
     return Container(
       color: Colors.white,
@@ -872,10 +1002,6 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoadingData) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
     return Scaffold(
       backgroundColor: Colors.black,
       body: Column(
@@ -944,6 +1070,87 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
                                       ),
                                     ),
                                   ),
+                                  // Debug button to select category
+                                  if (_debugMode)
+                                    Container(
+                                      margin: const EdgeInsets.only(right: 8),
+                                      child: PopupMenuButton<String>(
+                                        icon: const Icon(
+                                          Icons.bug_report,
+                                          color: Colors.orange,
+                                        ),
+                                        tooltip: 'Debug: Select Category',
+                                        onSelected: (String category) {
+                                          setState(() {
+                                            _debugSelectedCategory = category;
+                                          });
+                                          // Use default codes for debug testing
+                                          final code = category == 'Kendaraan'
+                                              ? 'K-001'
+                                              : 'T-001';
+                                          final dropPoint = {
+                                            'code': code,
+                                            'category': category,
+                                          };
+                                          // For Toko category, check if there are items
+                                          if (category == 'Toko') {
+                                            final itemsForToko =
+                                                _scannedItemsController
+                                                    .masterItemsList
+                                                    .where(
+                                                      (item) =>
+                                                          item['drop_point_code'] ==
+                                                          code,
+                                                    )
+                                                    .toList();
+
+                                            if (itemsForToko.isEmpty) {
+                                              _showTopMessage(
+                                                '✗ No items found for $code. Please scan Kendaraan first.',
+                                                Colors.red,
+                                              );
+                                              return;
+                                            }
+                                          }
+
+                                          setState(() {
+                                            _pendingDropPoint = dropPoint;
+                                          });
+                                          _audioPlayer.play(
+                                            AssetSource('sounds/success.mp3'),
+                                          );
+                                          Vibration.vibrate(duration: 100);
+                                        },
+                                        itemBuilder: (BuildContext context) => [
+                                          const PopupMenuItem<String>(
+                                            value: 'Kendaraan',
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.local_shipping,
+                                                  color: Colors.blue,
+                                                ),
+                                                SizedBox(width: 8),
+                                                Text('Kendaraan'),
+                                              ],
+                                            ),
+                                          ),
+                                          const PopupMenuItem<String>(
+                                            value: 'Toko',
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.store,
+                                                  color: Colors.green,
+                                                ),
+                                                SizedBox(width: 8),
+                                                Text('Toko'),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   Obx(
                                     () =>
                                         _scannedItemsController
@@ -1034,14 +1241,33 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                _currentDropPoint!['category'] == 'Kendaraan'
-                                    ? 'Scan barang untuk dimasukkan ke Kendaraan ${_currentDropPoint!['code']}${_currentRouteName != null ? ' - $_currentRouteName' : ''}'
-                                    : 'Scan barang untuk diturunkan ke Toko - ${_currentDropPoint!['code']}',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      _currentDropPoint!['category'] ==
+                                              'Kendaraan'
+                                          ? 'Scan barang untuk dimasukkan ke Kendaraan ${_currentDropPoint!['code']}${_currentRouteName != null ? ' - $_currentRouteName' : ''}'
+                                          : 'Scan barang untuk diturunkan ke Toko - ${_currentDropPoint!['code']}',
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    onPressed: _debugAutoAddItems,
+                                    icon: const Icon(
+                                      Icons.bug_report,
+                                      color: Colors.purple,
+                                    ),
+                                    tooltip: 'Debug: Auto-add items',
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: Colors.purple
+                                          .withOpacity(0.1),
+                                    ),
+                                  ),
+                                ],
                               ),
                               const SizedBox(height: 8),
                               if (_currentDropPoint!['category'] ==
@@ -1105,50 +1331,26 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
                     child: _pendingDropPoint != null
                         ? _buildDropPointConfirmation()
                         : _currentDropPoint == null
-                        ? ListView.builder(
-                            itemCount: _dropPoints.length,
-                            itemBuilder: (context, index) {
-                              final dropPoint = _dropPoints[index];
-                              final itemCount = _scannedItemsController
-                                  .getCountForDropPoint(dropPoint['code']);
-                              return ListTile(
-                                leading: Icon(
-                                  dropPoint['category'] == 'Kendaraan'
-                                      ? Icons.local_shipping
-                                      : Icons.store,
-                                  color: Colors.blue,
+                        ? const Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.qr_code_scanner,
+                                  size: 64,
+                                  color: Colors.grey,
                                 ),
-                                title: Text(
-                                  dropPoint['code'],
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w500,
+                                SizedBox(height: 16),
+                                Text(
+                                  'Arahkan kamera ke QR Drop Point',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: Colors.grey,
                                   ),
+                                  textAlign: TextAlign.center,
                                 ),
-                                subtitle: Text(dropPoint['category']),
-                                trailing: itemCount > 0
-                                    ? Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 6,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.green,
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '$itemCount items',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      )
-                                    : null,
-                              );
-                            },
+                              ],
+                            ),
                           )
                         : (_currentDropPoint!['category'] == 'Kendaraan' &&
                               _routePoints.isNotEmpty)

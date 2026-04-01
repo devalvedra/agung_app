@@ -3,14 +3,16 @@ import 'dart:convert';
 import 'dart:developer';
 import 'dart:math' show cos, sqrt, asin, sin, atan2;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
+import 'package:http/http.dart' as http;
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../constants/app_constants.dart';
 import '../controllers/tracking_controller.dart';
 import '../services/firebase_location_service.dart';
+import '../services/settings_service.dart';
 import 'delivery_scanner.dart';
 
 class TrackingScreen extends StatefulWidget {
@@ -23,12 +25,23 @@ class TrackingScreen extends StatefulWidget {
 class _TrackingScreenState extends State<TrackingScreen> {
   final TrackingController _trackingController = Get.put(TrackingController());
   GoogleMapController? _mapController;
-  List<Map<String, dynamic>> _routes = [];
   final Set<Marker> _markers = {};
   final Set<Polyline> _polylines = {};
-  bool _isLoading = true;
+  bool _isLoading = false;
   int _currentPointIndex = 0;
+
+  // QR scanner state
+  bool _showScanner = true;
+  bool _isFetchingRoute = false;
+  bool _isRouteLoading = false;
+  String? _vehicleNo;
+  bool _debugMode = true; // Set to false to disable debug button
+  static const String _debugVehicleNo = 'K-001'; // Debug vehicle number
+  MobileScannerController? _qrScannerController;
+  bool _qrCanScan = true;
   BitmapDescriptor? _truckIcon;
+  bool _followTruck = true;
+  bool _isProgrammaticMove = false;
   Timer? _animationTimer;
   LatLng? _targetPosition;
   double _lerpProgress = 0.0;
@@ -47,28 +60,32 @@ class _TrackingScreenState extends State<TrackingScreen> {
   void initState() {
     super.initState();
     _loadTruckIcon();
-    _checkGpsAndInitialize();
-    _restoreStateFromController();
+    _initQrScanner();
+    // Restore if route was already selected
+    if (_trackingController.selectedRoute.value != null) {
+      _showScanner = false;
+      _vehicleNo = _trackingController.selectedRouteCode.value;
+      _checkGpsAndInitialize();
+    }
   }
 
-  void _restoreStateFromController() {
-    // Restore state from controller if available
-    if (_trackingController.selectedRoute.value != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        setState(() {
-          _onRouteSelected(_trackingController.selectedRouteCode.value);
-        });
-      });
-    }
+  void _initQrScanner() {
+    _qrScannerController = MobileScannerController(
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      autoStart: false,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _showScanner) {
+        _qrScannerController?.start();
+      }
+    });
   }
 
   Future<void> _checkGpsAndInitialize() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled && mounted) {
-      // GPS is not enabled, show alert
       _showGpsDisabledAlert();
     } else {
-      // GPS is enabled, proceed with initialization
       _getCurrentLocation();
     }
   }
@@ -127,6 +144,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
     _positionStreamSubscription?.cancel();
     _firebaseSyncTimer?.cancel();
     _mapController?.dispose();
+    _qrScannerController?.dispose();
     super.dispose();
   }
 
@@ -151,8 +169,8 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
   Future<void> _loadTruckIcon() async {
     try {
-      _truckIcon = await BitmapDescriptor.asset(
-        const ImageConfiguration(size: Size(24, 24)),
+      _truckIcon = await BitmapDescriptor.fromAssetImage(
+        const ImageConfiguration(size: Size(48, 48)),
         'assets/images/truck_icon.png',
       );
     } catch (e) {
@@ -160,13 +178,14 @@ class _TrackingScreenState extends State<TrackingScreen> {
         BitmapDescriptor.hueBlue,
       );
     }
+    // Rebuild markers now that the icon is ready
+    if (mounted) setState(() => _buildMarkersAndPolylines());
   }
 
   Future<void> _getCurrentLocation() async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        await _loadRoutesWithoutLocation();
         return;
       }
 
@@ -174,65 +193,122 @@ class _TrackingScreenState extends State<TrackingScreen> {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          await _loadRoutesWithoutLocation();
           return;
         }
       }
 
       if (permission == LocationPermission.deniedForever) {
-        await _loadRoutesWithoutLocation();
         return;
       }
 
       _currentPosition = await Geolocator.getCurrentPosition();
-      await _loadRoutes();
     } catch (e) {
-      await _loadRoutesWithoutLocation();
+      debugPrint('Error getting location: $e');
     }
   }
 
-  Future<void> _loadRoutesWithoutLocation() async {
-    await _loadRoutes();
-    if (_routes.isNotEmpty && mounted) {
+  void _handleVehicleQrScan(BarcodeCapture capture) {
+    if (!mounted || !_qrCanScan || _isFetchingRoute) return;
+
+    for (final barcode in capture.barcodes) {
+      final code = barcode.displayValue ?? barcode.rawValue;
+      if (code == null || code.isEmpty) continue;
+
+      _qrCanScan = false;
+      _qrScannerController?.stop();
+      _fetchRouteForVehicle(code);
+      break;
+    }
+  }
+
+  Future<void> _fetchRouteForVehicle(String vehicleNo) async {
+    setState(() {
+      _isFetchingRoute = true;
+    });
+
+    try {
+      final baseUrl = SettingsService.instance.baseUrl;
+      final uri = Uri.parse(
+        '$baseUrl/api/delivery/get-delivery-route/$vehicleNo',
+      );
+      print('Uri data: $uri');
+
+      final response = await http
+          .get(uri, headers: {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 15));
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = json.decode(response.body);
+        // API should return a route object compatible with the existing structure
+        // Expected: { "code": "...", "name": "...", "route_points": [...] }
+        print('Route data: $data');
+        final route = data['data'] ?? data;
+
+        setState(() {
+          _vehicleNo = vehicleNo;
+          _showScanner = false;
+          _isFetchingRoute = false;
+          _isLoading = false;
+        });
+
+        // Initialize GPS now that we have a vehicle
+        await _checkGpsAndInitialize();
+
+        // Select the fetched route
+        _onRouteSelected(route);
+      } else {
+        setState(() {
+          _isFetchingRoute = false;
+          _qrCanScan = true;
+        });
+        _qrScannerController?.start();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'No route found for vehicle "$vehicleNo" (${response.statusCode})',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isFetchingRoute = false;
+        _qrCanScan = true;
+      });
+      _qrScannerController?.start();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Location not available. Please select a route manually.',
-          ),
-          backgroundColor: Colors.orange,
+        SnackBar(
+          content: Text('Failed to fetch route: $e'),
+          backgroundColor: Colors.red,
         ),
       );
     }
   }
 
-  Future<void> _loadRoutes() async {
-    try {
-      final String jsonString = await rootBundle.loadString(
-        'lib/constants/dummy_data.json',
-      );
-      final Map<String, dynamic> data = json.decode(jsonString);
-      setState(() {
-        _routes = List<Map<String, dynamic>>.from(data['route'] ?? []);
-        _isLoading = false;
-      });
-
-      // Auto-select closest route if location is available
-      if (_currentPosition != null && _routes.isNotEmpty) {
-        _selectClosestRoute();
-      }
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading routes: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
+  void _rescanVehicle() {
+    setState(() {
+      _showScanner = true;
+      _vehicleNo = null;
+      _qrCanScan = true;
+      _followTruck = true;
+      _isProgrammaticMove = false;
+      _trackingController.resetTracking();
+      _markers.clear();
+      _polylines.clear();
+      _routeCoordinates.clear();
+      _currentPointIndex = 0;
+      _currentRouteCoordinateIndex = 0;
+      _animationTimer?.cancel();
+      _positionStreamSubscription?.cancel();
+      _stopFirebaseSync();
+    });
+    _qrScannerController?.start();
   }
 
   double _calculateDistance(
@@ -249,67 +325,17 @@ class _TrackingScreenState extends State<TrackingScreen> {
     return 12742 * asin(sqrt(a)); // 2 * R; R = 6371 km
   }
 
-  void _selectClosestRoute() {
-    if (_currentPosition == null || _routes.isEmpty) return;
-
-    double minDistance = double.infinity;
-    String? closestRouteCode;
-
-    for (final route in _routes) {
-      final routePoints = List<Map<String, dynamic>>.from(
-        route['route_points'] ?? [],
-      );
-
-      if (routePoints.isEmpty) continue;
-
-      final firstPoint = routePoints.firstWhere(
-        (point) => point['lat'] != null && point['lng'] != null,
-        orElse: () => {},
-      );
-
-      if (firstPoint.isEmpty) continue;
-
-      final lat = double.tryParse(firstPoint['lat'].toString());
-      final lng = double.tryParse(firstPoint['lng'].toString());
-
-      if (lat == null || lng == null) continue;
-
-      final distance = _calculateDistance(
-        _currentPosition!.latitude,
-        _currentPosition!.longitude,
-        lat,
-        lng,
-      );
-
-      if (distance < minDistance) {
-        minDistance = distance;
-        closestRouteCode = route['code'];
-      }
-    }
-
-    if (closestRouteCode != null) {
-      _onRouteSelected(closestRouteCode);
-    }
-  }
-
-  void _onRouteSelected(String? routeCode) {
-    if (routeCode == null) return;
-
-    final route = _routes.firstWhere(
-      (r) => r['code'] == routeCode,
-      orElse: () => {},
-    );
-
-    if (route.isEmpty) return;
+  void _onRouteSelected(Map<String, dynamic> route) {
+    final routeCode = route['code']?.toString() ?? '';
 
     setState(() {
       _trackingController.setSelectedRoute(routeCode, route);
       _currentPointIndex = 0;
       _trackingController.setCurrentSegmentIndex(0);
-      // Clear everything before building new route
       _markers.clear();
       _polylines.clear();
       _routeCoordinates.clear();
+      _isRouteLoading = false;
     });
 
     // Fetch and display the new route
@@ -322,9 +348,6 @@ class _TrackingScreenState extends State<TrackingScreen> {
       );
       _buildMarkersAndPolylines();
     }
-
-    // Save route to Firebase
-    _saveRouteToFirebase();
   }
 
   void _buildMarkersAndPolylines() {
@@ -457,12 +480,14 @@ class _TrackingScreenState extends State<TrackingScreen> {
     }
 
     // Add truck marker if position is available
-    if (_trackingController.truckPosition.value != null && _truckIcon != null) {
+    if (_trackingController.truckPosition.value != null) {
       _markers.add(
         Marker(
           markerId: const MarkerId('truck'),
           position: _trackingController.truckPosition.value!,
-          icon: _truckIcon!,
+          icon:
+              _truckIcon ??
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
           anchor: const Offset(0.5, 0.5),
           rotation: _trackingController.truckRotation.value,
           infoWindow: InfoWindow(
@@ -479,7 +504,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
   }
 
   Future<void> _loadRoute() async {
+    if (_isRouteLoading) return;
     if (_trackingController.selectedRoute.value == null) return;
+    _isRouteLoading = true;
 
     final routePoints = List<Map<String, dynamic>>.from(
       _trackingController.selectedRoute.value!['route_points'] ?? [],
@@ -505,9 +532,19 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
     // Fetch real route using Directions API (only for current segment)
     await _fetchRealRoute(currentSegmentPoints);
+    _isRouteLoading = false;
 
     // Focus camera on the current segment
     _updateCameraForCurrentSegment(allValidPoints);
+
+    // Auto-start tracking once the route is ready
+    if (mounted && !_trackingController.isAnimating.value) {
+      if (_trackingController.isSimulationMode.value) {
+        _startSimulation();
+      } else {
+        _startGpsTracking();
+      }
+    }
   }
 
   Future<void> _fetchRealRoute(List<Map<String, dynamic>> points) async {
@@ -536,6 +573,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   mode: TravelMode.driving,
                 ),
               );
+
+          print(
+            'polyline result: ${result.status}, error: ${result.errorMessage}',
+          );
 
           if (result.points.isNotEmpty) {
             // Only add the first point if this is the first segment or if it's different from the last point
@@ -569,6 +610,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
           }
         } catch (e) {
           // On error, retry
+          print('error $e');
           if (retry < maxRetries - 1) {
             await Future.delayed(Duration(seconds: retry + 1));
           }
@@ -795,11 +837,25 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
     setState(() {
       _trackingController.setAnimatingState(true);
+      // Place the truck icon immediately so it's visible before the first GPS event
+      final initialPosition = _currentPosition != null
+          ? LatLng(_currentPosition!.latitude, _currentPosition!.longitude)
+          : _trackingController.currentSegmentCoordinates.first;
+      _trackingController.setTruckPosition(initialPosition);
+      if (_trackingController.currentSegmentCoordinates.length > 1) {
+        _trackingController.setTruckRotation(
+          _calculateBearing(
+            initialPosition,
+            _trackingController.currentSegmentCoordinates[1],
+          ),
+        );
+      }
+      _buildMarkersAndPolylines();
     });
 
     // Start Firebase sync
-    _startFirebaseSync();
-    _updateFirebaseTruckStatus('tracking');
+    // _startFirebaseSync();
+    // _updateFirebaseTruckStatus('tracking');
 
     // Start listening to GPS position updates
     _positionStreamSubscription =
@@ -878,19 +934,29 @@ class _TrackingScreenState extends State<TrackingScreen> {
   void _updateCameraFollowTruck() {
     if (_trackingController.truckPosition.value == null ||
         !_trackingController.isAnimating.value ||
-        _mapController == null)
+        _mapController == null ||
+        !_followTruck)
       return;
 
-    // Center camera on truck position with appropriate zoom level
+    // Move camera to truck position without changing zoom or bearing
+    _isProgrammaticMove = true;
     _mapController!.animateCamera(
-      CameraUpdate.newCameraPosition(
-        CameraPosition(
-          target: _trackingController.truckPosition.value!,
-          zoom: 17.0,
-          bearing: _trackingController.truckRotation.value,
-        ),
-      ),
+      CameraUpdate.newLatLng(_trackingController.truckPosition.value!),
     );
+    Future.delayed(const Duration(milliseconds: 600), () {
+      _isProgrammaticMove = false;
+    });
+  }
+
+  void _onUserCameraMove() {
+    if (!_isProgrammaticMove && _followTruck) {
+      setState(() => _followTruck = false);
+    }
+  }
+
+  void _refocusOnTruck() {
+    setState(() => _followTruck = true);
+    _updateCameraFollowTruck();
   }
 
   /// Initialize Firebase location service with truck ID
@@ -1150,8 +1216,113 @@ class _TrackingScreenState extends State<TrackingScreen> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildQrScannerView() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        title: const Text('Scan Vehicle QR Code'),
+        backgroundColor: Colors.green,
+      ),
+      body: Stack(
+        children: [
+          MobileScanner(
+            controller: _qrScannerController!,
+            onDetect: _handleVehicleQrScan,
+          ),
+          // Overlay instructions
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              color: Colors.black54,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.qr_code_scanner,
+                    color: Colors.white,
+                    size: 48,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Point camera at vehicle QR code',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'The vehicle number will be used to load\nyour delivery route automatically.',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.8),
+                      fontSize: 14,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  if (_debugMode) ...[
+                    const SizedBox(height: 20),
+                    OutlinedButton.icon(
+                      onPressed: _isFetchingRoute
+                          ? null
+                          : () {
+                              _qrCanScan = false;
+                              _qrScannerController?.stop();
+                              _fetchRouteForVehicle(_debugVehicleNo);
+                            },
+                      icon: const Icon(Icons.bug_report, color: Colors.yellow),
+                      label: Text(
+                        'Debug: Use "$_debugVehicleNo"',
+                        style: const TextStyle(color: Colors.yellow),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.yellow),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          // Loading overlay when fetching route
+          if (_isFetchingRoute)
+            Container(
+              color: Colors.black54,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      CircularProgressIndicator(color: Colors.green),
+                      SizedBox(height: 16),
+                      Text(
+                        'Loading delivery route...',
+                        style: TextStyle(fontSize: 16),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrackingView() {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Package Tracking'),
@@ -1174,19 +1345,6 @@ class _TrackingScreenState extends State<TrackingScreen> {
                             ? 'GPS Mode'
                             : 'Simulation Mode',
                       ),
-                      IconButton(
-                        icon: Icon(
-                          _trackingController.isAnimating.value
-                              ? Icons.pause
-                              : Icons.play_arrow,
-                        ),
-                        onPressed: _toggleTracking,
-                        tooltip: _trackingController.isAnimating.value
-                            ? 'Stop Tracking'
-                            : (_trackingController.isSimulationMode.value
-                                  ? 'Start Simulation'
-                                  : 'Start GPS Tracking'),
-                      ),
                     ],
                   )
                 : const SizedBox.shrink(),
@@ -1197,117 +1355,123 @@ class _TrackingScreenState extends State<TrackingScreen> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // Route Selector
+                // Vehicle info banner
                 Container(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
                   color: Colors.grey.shade100,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      const Text(
-                        'Select Route:',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      const Icon(
+                        Icons.local_shipping,
+                        color: Colors.green,
+                        size: 20,
                       ),
-                      const SizedBox(height: 8),
-                      DropdownButtonFormField<String>(
-                        value:
-                            _trackingController.selectedRouteCode.value.isEmpty
-                            ? null
-                            : _trackingController.selectedRouteCode.value,
-                        decoration: InputDecoration(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          filled: true,
-                          fillColor: Colors.white,
-                        ),
-                        hint: const Text('Choose a route'),
-                        items: _routes.map((route) {
-                          return DropdownMenuItem<String>(
-                            value: route['code'],
-                            child: Text(
-                              '${route['code']} - ${route['name']}',
-                              style: const TextStyle(fontSize: 14),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Vehicle: ${_vehicleNo ?? '-'}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          );
-                        }).toList(),
-                        onChanged: _onRouteSelected,
+                            Obx(
+                              () =>
+                                  _trackingController.selectedRoute.value !=
+                                      null
+                                  ? Text(
+                                      'Route: ${_trackingController.selectedRoute.value!['name'] ?? _trackingController.selectedRouteCode.value}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
+                          ],
+                        ),
                       ),
                       Obx(
                         () => _trackingController.selectedRoute.value != null
-                            ? Column(
-                                children: [
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        'Segment: ${_trackingController.currentSegmentIndex.value + 1} / ${(_trackingController.selectedRoute.value!['route_points'] as List).where((p) => p['lat'] != null).length - 1}',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          color: Colors.grey.shade700,
-                                        ),
+                            ? Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color:
+                                      _trackingController.isSimulationMode.value
+                                      ? Colors.orange
+                                      : Colors.blue,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      _trackingController.isSimulationMode.value
+                                          ? Icons.directions_car
+                                          : Icons.gps_fixed,
+                                      size: 12,
+                                      color: Colors.white,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      _trackingController.isSimulationMode.value
+                                          ? 'Simulation'
+                                          : 'GPS',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
                                       ),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color:
-                                              _trackingController
-                                                  .isSimulationMode
-                                                  .value
-                                              ? Colors.orange
-                                              : Colors.blue,
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              _trackingController
-                                                      .isSimulationMode
-                                                      .value
-                                                  ? Icons.directions_car
-                                                  : Icons.gps_fixed,
-                                              size: 14,
-                                              color: Colors.white,
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              _trackingController
-                                                      .isSimulationMode
-                                                      .value
-                                                  ? 'Simulation'
-                                                  : 'GPS',
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                    ),
+                                  ],
+                                ),
                               )
                             : const SizedBox.shrink(),
                       ),
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                        onPressed: _rescanVehicle,
+                        icon: const Icon(Icons.qr_code_scanner, size: 16),
+                        label: const Text('Rescan'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.green,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                      ),
                     ],
                   ),
+                ),
+                // Segment info
+                Obx(
+                  () => _trackingController.selectedRoute.value != null
+                      ? Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 4,
+                          ),
+                          color: Colors.grey.shade50,
+                          child: Row(
+                            children: [
+                              Text(
+                                'Segment: ${_trackingController.currentSegmentIndex.value + 1} / ${(_trackingController.selectedRoute.value!['route_points'] as List).where((p) => p['lat'] != null).length - 1}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : const SizedBox.shrink(),
                 ),
                 // Map
                 Expanded(
@@ -1318,13 +1482,13 @@ class _TrackingScreenState extends State<TrackingScreen> {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Icon(
-                                  Icons.local_shipping,
+                                  Icons.map_outlined,
                                   size: 80,
                                   color: Colors.grey.shade400,
                                 ),
                                 const SizedBox(height: 16),
                                 Text(
-                                  'Select a route to track',
+                                  'Loading route...',
                                   style: TextStyle(
                                     fontSize: 18,
                                     color: Colors.grey.shade600,
@@ -1333,24 +1497,41 @@ class _TrackingScreenState extends State<TrackingScreen> {
                               ],
                             ),
                           )
-                        : GoogleMap(
-                            initialCameraPosition: CameraPosition(
-                              target: const LatLng(0.0263, 109.3425),
-                              zoom: AppConstants.routeZoomLevel,
-                            ),
-                            markers: _markers,
-                            polylines: _polylines,
-                            onMapCreated: (controller) {
-                              _mapController = controller;
-                              if (_trackingController.selectedRoute.value !=
-                                  null) {
-                                _loadRoute();
-                              }
-                            },
-                            myLocationButtonEnabled: true,
-                            myLocationEnabled: true,
-                            mapType: MapType.normal,
-                            zoomControlsEnabled: true,
+                        : Stack(
+                            children: [
+                              GoogleMap(
+                                initialCameraPosition: CameraPosition(
+                                  target: const LatLng(0.0263, 109.3425),
+                                  zoom: AppConstants.routeZoomLevel,
+                                ),
+                                markers: _markers,
+                                polylines: _polylines,
+                                onMapCreated: (controller) {
+                                  _mapController = controller;
+                                  if (_trackingController.selectedRoute.value !=
+                                      null) {
+                                    _loadRoute();
+                                  }
+                                },
+                                onCameraMoveStarted: _onUserCameraMove,
+                                myLocationButtonEnabled: false,
+                                myLocationEnabled: false,
+                                mapType: MapType.normal,
+                                zoomControlsEnabled: false,
+                              ),
+                              if (!_followTruck)
+                                Positioned(
+                                  bottom: 16,
+                                  right: 16,
+                                  child: FloatingActionButton.small(
+                                    onPressed: _refocusOnTruck,
+                                    backgroundColor: Colors.white,
+                                    foregroundColor: Colors.blue,
+                                    tooltip: 'Re-focus on truck',
+                                    child: const Icon(Icons.my_location),
+                                  ),
+                                ),
+                            ],
                           ),
                   ),
                 ),
@@ -1409,7 +1590,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                               const SizedBox(height: 8),
                               Row(
                                 children: [
-                                  Icon(
+                                  const Icon(
                                     Icons.trip_origin,
                                     color: Colors.green,
                                     size: 18,
@@ -1429,7 +1610,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                               const SizedBox(height: 4),
                               Row(
                                 children: [
-                                  Icon(
+                                  const Icon(
                                     Icons.location_on,
                                     color: Colors.red,
                                     size: 18,
@@ -1451,50 +1632,17 @@ class _TrackingScreenState extends State<TrackingScreen> {
                         )
                       : const SizedBox.shrink(),
                 ),
-                // Next Point Button
-                // if (_selectedRoute != null)
-                //   Container(
-                //     width: double.infinity,
-                //     padding: const EdgeInsets.all(16),
-                //     child: ElevatedButton(
-                //       onPressed: () {
-                //         final routePoints = List<Map<String, dynamic>>.from(
-                //           _selectedRoute!['route_points'] ?? [],
-                //         );
-                //         final validPoints = routePoints.where((point) {
-                //           return point['lat'] != null && point['lng'] != null;
-                //         }).toList();
-
-                //         if (_currentSegmentIndex + 2 < validPoints.length) {
-                //           _proceedToNextSegment(validPoints);
-                //         } else {
-                //           ScaffoldMessenger.of(context).showSnackBar(
-                //             const SnackBar(
-                //               content: Text('Route completed!'),
-                //               backgroundColor: Colors.blue,
-                //             ),
-                //           );
-                //         }
-                //       },
-                //       style: ElevatedButton.styleFrom(
-                //         backgroundColor: Colors.green,
-                //         foregroundColor: Colors.white,
-                //         padding: const EdgeInsets.symmetric(vertical: 16),
-                //       ),
-                //       child: Text(
-                //         _currentSegmentIndex + 2 <
-                //                 ((_selectedRoute!['route_points'] as List)
-                //                     .where((p) => p['lat'] != null)
-                //                     .length)
-                //             ? 'Next Point'
-                //             : 'Complete Route',
-                //         style: const TextStyle(fontSize: 16),
-                //       ),
-                //     ),
-                //   ),
               ],
             ),
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_showScanner) {
+      return _buildQrScannerView();
+    }
+    return _buildTrackingView();
   }
 
   String _getCurrentSegmentLabel() {

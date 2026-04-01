@@ -3,7 +3,7 @@ class AppConstants {
   /// Google Maps API Key - Replace with your actual API key
   /// See docs/google_maps_api_setup.md for setup instructions
   static const String googleMapsApiKey =
-      'AIzaSyBYNZhw1sqO7e5vRfOGBQ3NuLFThVvj5LM';
+      'AIzaSyBDsmZCFrLpKtHThMzYrKPQEcVayK_VSxI';
 
   /// Animation duration for truck movement between points (in seconds)
   static const int routeAnimationDurationSeconds = 10;
@@ -19,6 +19,9 @@ class AppConstants {
   /// Animation speed multiplier (higher = faster animation, lower = slower)
   /// Default: 1.0 for normal speed, 2.0 for double speed, 0.5 for half speed
   static const double animationSpeedMultiplier = 2.0;
+
+  /// Zoom level when following the truck during active tracking (street level)
+  static const double trackingZoomLevel = 17.0;
 
   /// Padding for map bounds (higher = more zoomed out to fit content)
   static const double mapBoundsPadding = 100.0;

@@ -364,66 +364,46 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
   }
 
   /// Debug: Manually add next unscanned item for active locator
-  void _debugAddNextItem() async {
+  void _debugAddNextItem() {
     if (_currentInvoice == null || _activeLocator == null) {
       log('No invoice or locator active for debug add');
       return;
     }
 
-    final listBarang = _currentInvoice!['list_barang'] as List<dynamic>;
+    final TextEditingController controller = TextEditingController();
 
-    // Find the next unscanned item for the active locator
-    final nextUnscanned = listBarang.firstWhereOrNull(
-      (item) =>
-          item['locator'] == _activeLocator &&
-          !_scannedItems.any(
-            (scanned) =>
-                scanned['barang_id'] == item['barang_id'] &&
-                scanned['locator'] == item['locator'],
+    Get.dialog(
+      AlertDialog(
+        title: const Text('🐛 Debug: Enter Item Code'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Enter item QR code',
+            border: OutlineInputBorder(),
           ),
+          onSubmitted: (value) {
+            Get.back();
+            if (value.isNotEmpty) {
+              _processItemScan(value);
+            }
+          },
+        ),
+        actions: [
+          TextButton(onPressed: () => Get.back(), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () {
+              final value = controller.text.trim();
+              Get.back();
+              if (value.isNotEmpty) {
+                _processItemScan(value);
+              }
+            },
+            child: const Text('OK'),
+          ),
+        ],
+      ),
     );
-
-    if (nextUnscanned == null) {
-      Get.snackbar(
-        'Debug',
-        'All items for this locator already scanned',
-        snackPosition: SnackPosition.TOP,
-        backgroundColor: Colors.blue,
-        colorText: Colors.white,
-        duration: const Duration(seconds: 1),
-      );
-      return;
-    }
-
-    // Play success sound
-    try {
-      await _audioPlayer.play(AssetSource('sounds/success.mp3'));
-    } catch (e) {
-      log('Error playing sound: $e');
-    }
-
-    // Vibrate
-    if (await Vibration.hasVibrator() ?? false) {
-      Vibration.vibrate(duration: 200);
-    }
-
-    // Add to scanned items
-    setState(() {
-      _scannedItems.add(nextUnscanned);
-    });
-
-    // Show success message
-    Get.snackbar(
-      '🐛 Debug: Item Added',
-      '${nextUnscanned['nama_barang']} (${_scannedItems.length}/${listBarang.length})',
-      snackPosition: SnackPosition.TOP,
-      backgroundColor: Colors.purple,
-      colorText: Colors.white,
-      duration: const Duration(seconds: 1),
-    );
-
-    // Check if all items for this locator are scanned
-    _checkLocatorCompletion();
   }
 
   /// Debug: Fill invoice QR code with test data
@@ -461,7 +441,7 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
     );
   }
 
-  /// Debug: Select and activate a locator from available locators
+  /// Debug: Manually enter a locator code
   void _debugSelectLocator() {
     if (_currentInvoice == null) {
       Get.snackbar(
@@ -474,63 +454,37 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
       return;
     }
 
-    final listBarang = _currentInvoice!['list_barang'] as List<dynamic>;
-
-    // Get unique locators that still have unscanned items
-    final Set<String> availableLocators = {};
-    for (final item in listBarang) {
-      final locator = item['locator'] as String;
-      final isScanned = _scannedItems.any(
-        (scanned) =>
-            scanned['barang_id'] == item['barang_id'] &&
-            scanned['locator'] == item['locator'],
-      );
-      if (!isScanned) {
-        availableLocators.add(locator);
-      }
-    }
-
-    if (availableLocators.isEmpty) {
-      Get.snackbar(
-        'Debug',
-        'All locators completed',
-        snackPosition: SnackPosition.TOP,
-        backgroundColor: Colors.green,
-        colorText: Colors.white,
-      );
-      return;
-    }
+    final TextEditingController controller = TextEditingController();
 
     Get.dialog(
       AlertDialog(
-        title: const Text('🐛 Debug: Select Locator'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: availableLocators.length,
-            itemBuilder: (context, index) {
-              final locator = availableLocators.elementAt(index);
-              final itemCount = listBarang
-                  .where((item) => item['locator'] == locator)
-                  .length;
-              final scannedCount = _scannedItems
-                  .where((item) => item['locator'] == locator)
-                  .length;
-              return ListTile(
-                leading: const Icon(Icons.location_on, color: Colors.purple),
-                title: Text(locator),
-                subtitle: Text('$scannedCount/$itemCount scanned'),
-                onTap: () {
-                  Get.back();
-                  _processLocatorScan(locator);
-                },
-              );
-            },
+        title: const Text('🐛 Debug: Enter Locator Code'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Enter locator code',
+            border: OutlineInputBorder(),
           ),
+          onSubmitted: (value) {
+            Get.back();
+            if (value.isNotEmpty) {
+              _processLocatorScan(value);
+            }
+          },
         ),
         actions: [
           TextButton(onPressed: () => Get.back(), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () {
+              final value = controller.text.trim();
+              Get.back();
+              if (value.isNotEmpty) {
+                _processLocatorScan(value);
+              }
+            },
+            child: const Text('OK'),
+          ),
         ],
       ),
     );
@@ -542,13 +496,6 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
 
     final listBarang = _currentInvoice!['list_barang'] as List<dynamic>;
 
-    // Check if all items are scanned
-    if (_scannedItems.length == listBarang.length) {
-      final invoiceNumber = _currentInvoice!['nojual'];
-      _updatePickupStatus(invoiceNumber);
-      return;
-    }
-
     // Check if all items for current locator are scanned
     if (_activeLocator != null) {
       final locatorItems = listBarang
@@ -559,20 +506,8 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
           .toList();
 
       if (scannedLocatorItems.length == locatorItems.length) {
-        // All items for this locator are scanned, go back to locator mode
-        setState(() {
-          _activeLocator = null;
-          _currentScanMode = ScanMode.locator;
-        });
-
-        Get.snackbar(
-          'Locator Complete',
-          'All items for this location scanned. Scan next locator.',
-          snackPosition: SnackPosition.TOP,
-          backgroundColor: Colors.blue,
-          colorText: Colors.white,
-          duration: const Duration(seconds: 2),
-        );
+        // All items for this locator are scanned — user must press Confirm
+        setState(() {}); // rebuild to enable confirm button
       }
     }
   }
@@ -702,14 +637,15 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
     // Find matching item with the active locator
 
     var id = code.split('|')[0];
+    var locator = code.split('|')[1];
     final matchingItem = listBarang.firstWhereOrNull(
-      (item) => item['barang_id'] == id && item['locator'] == _activeLocator,
+      (item) => item['barang_id'] == id && item['locator'] == locator,
     );
 
     if (matchingItem != null) {
       // Check if already scanned
       final alreadyScanned = _scannedItems.any(
-        (item) => item['barang_id'] == id && item['locator'] == _activeLocator,
+        (item) => item['barang_id'] == id && item['locator'] == locator,
       );
 
       if (alreadyScanned) {
@@ -785,6 +721,34 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
         );
       }
     }
+  }
+
+  /// Confirm completion of current locator and return to locator scanning mode
+  void _confirmLocatorDone() {
+    if (_currentInvoice == null) return;
+
+    final listBarang = _currentInvoice!['list_barang'] as List<dynamic>;
+
+    // If all invoice items are scanned, submit the pickup status
+    if (_scannedItems.length == listBarang.length) {
+      final invoiceNumber = _currentInvoice!['nojual'];
+      _updatePickupStatus(invoiceNumber);
+      return;
+    }
+
+    // Otherwise go back to locator scanning mode
+    setState(() {
+      _activeLocator = null;
+      _currentScanMode = ScanMode.locator;
+    });
+    Get.snackbar(
+      'Locator Complete',
+      'All items for this location scanned. Scan next locator.',
+      snackPosition: SnackPosition.TOP,
+      backgroundColor: Colors.blue,
+      colorText: Colors.white,
+      duration: const Duration(seconds: 2),
+    );
   }
 
   /// Get scan mode display text
@@ -1073,8 +1037,53 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                         ],
                       ),
                     ),
+
                     // Items list grouped by locator
                     Expanded(child: _buildItemsList()),
+
+                    // Confirm button in item scan mode
+                    if (_currentScanMode == ScanMode.item &&
+                        _activeLocator != null)
+                      Builder(
+                        builder: (context) {
+                          final listBarang =
+                              _currentInvoice!['list_barang'] as List<dynamic>;
+                          final locatorItems = listBarang
+                              .where(
+                                (item) => item['locator'] == _activeLocator,
+                              )
+                              .toList();
+                          final scannedCount = _scannedItems
+                              .where(
+                                (item) => item['locator'] == _activeLocator,
+                              )
+                              .length;
+                          final allScanned =
+                              scannedCount == locatorItems.length;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            child: ElevatedButton.icon(
+                              onPressed: allScanned
+                                  ? _confirmLocatorDone
+                                  : null,
+                              icon: const Icon(Icons.check_circle),
+                              label: Text(
+                                'Confirm ($scannedCount/${locatorItems.length})',
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                minimumSize: const Size.fromHeight(48),
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                disabledBackgroundColor: Colors.grey[300],
+                                disabledForegroundColor: Colors.grey[600],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                   ],
                 ),
               ),
@@ -1176,6 +1185,7 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
             ),
           ),
           child: ExpansionTile(
+            key: ValueKey('${locator}_$isActiveLocator'),
             initiallyExpanded: isActiveLocator,
             leading: Icon(
               isComplete

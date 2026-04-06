@@ -25,4 +25,8 @@ class AppConstants {
 
   /// Padding for map bounds (higher = more zoomed out to fit content)
   static const double mapBoundsPadding = 100.0;
+
+  /// Proximity notification threshold in kilometers (distance to trigger nearing notification)
+  /// Default: 0.2 km (200 meters)
+  static const double proximityNotificationThresholdKm = 0.2;
 }

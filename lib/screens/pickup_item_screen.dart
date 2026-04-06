@@ -160,6 +160,7 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                 'jlh': qty,
                 'satuan': unit,
                 'no_batch': barang['no_batch'] ?? '',
+                'nobd': barang['nobd'] ?? '',
                 'expired': barang['expired'] ?? '',
               };
             }).toList();
@@ -256,7 +257,7 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
       final requestBody = {
         'qr_code': _invoiceQrCode,
         'items': _scannedItems.map((item) {
-          return {'no': item['no'], 'waktu_ambil': timestamp};
+          return {'nobd': item['nobd'], 'waktu_ambil': timestamp};
         }).toList(),
         'iduser': iduser,
       };
@@ -506,8 +507,28 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
           .toList();
 
       if (scannedLocatorItems.length == locatorItems.length) {
-        // All items for this locator are scanned — user must press Confirm
-        setState(() {}); // rebuild to enable confirm button
+        if (_scannedItems.length == listBarang.length) {
+          // All invoice items complete — rebuild to show confirm button
+          setState(() {});
+        } else {
+          // Auto-advance to next locator after a brief delay
+          Future.delayed(const Duration(milliseconds: 800), () {
+            if (mounted) {
+              setState(() {
+                _activeLocator = null;
+                _currentScanMode = ScanMode.locator;
+              });
+              Get.snackbar(
+                'Locator Complete',
+                'All items scanned. Scan next locator.',
+                snackPosition: SnackPosition.TOP,
+                backgroundColor: Colors.blue,
+                colorText: Colors.white,
+                duration: const Duration(seconds: 2),
+              );
+            }
+          });
+        }
       }
     }
   }
@@ -635,17 +656,21 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
     final listBarang = _currentInvoice!['list_barang'] as List<dynamic>;
 
     // Find matching item with the active locator
+    print(listBarang);
 
     var id = code.split('|')[0];
-    var locator = code.split('|')[1];
+    var nobd = code.split('|')[1];
     final matchingItem = listBarang.firstWhereOrNull(
-      (item) => item['barang_id'] == id && item['locator'] == locator,
+      (item) =>
+          item['barang_id'] == id &&
+          item['nobd'] == nobd &&
+          item['locator'] == _activeLocator,
     );
 
     if (matchingItem != null) {
       // Check if already scanned
       final alreadyScanned = _scannedItems.any(
-        (item) => item['barang_id'] == id && item['locator'] == locator,
+        (item) => item['barang_id'] == id && item['nobd'] == nobd,
       );
 
       if (alreadyScanned) {
@@ -1041,48 +1066,28 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                     // Items list grouped by locator
                     Expanded(child: _buildItemsList()),
 
-                    // Confirm button in item scan mode
-                    if (_currentScanMode == ScanMode.item &&
-                        _activeLocator != null)
-                      Builder(
-                        builder: (context) {
-                          final listBarang =
-                              _currentInvoice!['list_barang'] as List<dynamic>;
-                          final locatorItems = listBarang
-                              .where(
-                                (item) => item['locator'] == _activeLocator,
-                              )
-                              .toList();
-                          final scannedCount = _scannedItems
-                              .where(
-                                (item) => item['locator'] == _activeLocator,
-                              )
-                              .length;
-                          final allScanned =
-                              scannedCount == locatorItems.length;
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            child: ElevatedButton.icon(
-                              onPressed: allScanned
-                                  ? _confirmLocatorDone
-                                  : null,
-                              icon: const Icon(Icons.check_circle),
-                              label: Text(
-                                'Confirm ($scannedCount/${locatorItems.length})',
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                minimumSize: const Size.fromHeight(48),
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                                disabledBackgroundColor: Colors.grey[300],
-                                disabledForegroundColor: Colors.grey[600],
-                              ),
-                            ),
-                          );
-                        },
+                    // Confirm button — shown only when all invoice items are scanned
+                    if (_currentInvoice != null &&
+                        _scannedItems.length ==
+                            (_currentInvoice!['list_barang'] as List).length)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        child: ElevatedButton.icon(
+                          onPressed: () =>
+                              _updatePickupStatus(_currentInvoice!['nojual']),
+                          icon: const Icon(Icons.check_circle),
+                          label: Text(
+                            'Confirm All (${_scannedItems.length}/${(_currentInvoice!['list_barang'] as List).length})',
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(48),
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
                       ),
                   ],
                 ),

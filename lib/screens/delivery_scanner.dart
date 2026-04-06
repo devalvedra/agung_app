@@ -6,6 +6,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
 import 'package:get/get.dart';
 import '../controllers/scanned_items_controller.dart';
+import '../services/settings_service.dart';
 import 'proof_capture_screen.dart';
 
 /// Implementation of Mobile Scanner example with multiple code scanning
@@ -549,9 +550,8 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
             .toSet();
         for (final invoiceCode in invoiceCodes) {
           try {
-            final uri = Uri.parse(
-              'http://10.14.225.210:8000/api/delivery/$invoiceCode/status',
-            );
+            final baseUrl = SettingsService.instance.baseUrl;
+            final uri = Uri.parse('$baseUrl/api/delivery/$invoiceCode/status');
             await http.put(
               uri,
               body: {
@@ -936,6 +936,42 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
       _audioPlayer.play(AssetSource('sounds/success.mp3'));
       Vibration.vibrate(duration: 100);
     } else if (category == 'Toko') {
+      _expectedTokoItems = [
+        {
+          'invoice_code': 'INV-2026-03-30-0002',
+          'route_code': _currentRouteCode ?? '',
+          'drop_point_code': _currentDropPoint!['code'],
+          'num_of_items': '3',
+          'item_size': 'B',
+          'num_of_items_per_size': '1',
+          'index': '00001',
+          'full_code':
+              'INV-2026-03-30-0002|${_currentRouteCode ?? ''}|${_currentDropPoint!['code']}|3|1|1|00001',
+        },
+        {
+          'invoice_code': 'INV-2026-03-30-0002',
+          'route_code': _currentRouteCode ?? '',
+          'drop_point_code': _currentDropPoint!['code'],
+          'num_of_items': '3',
+          'item_size': 'S',
+          'num_of_items_per_size': '1',
+          'index': '00002',
+          'full_code':
+              'INV-2026-03-30-0002|${_currentRouteCode ?? ''}|${_currentDropPoint!['code']}|3|2|1|00002',
+        },
+        {
+          'invoice_code': 'INV-2026-03-30-0002',
+          'route_code': _currentRouteCode ?? '',
+          'drop_point_code': _currentDropPoint!['code'],
+          'num_of_items': '3',
+          'item_size': 'K',
+          'num_of_items_per_size': '1',
+          'index': '00003',
+          'full_code':
+              'INV-2026-03-30-0002|${_currentRouteCode ?? ''}|${_currentDropPoint!['code']}|3|3|1|00003',
+        },
+      ];
+
       // Auto-add all expected items for Toko category
       if (_expectedTokoItems.isEmpty) {
         _showTopMessage('No expected items for this Toko', Colors.orange);

@@ -9,6 +9,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../constants/app_constants.dart';
 import '../controllers/tracking_controller.dart';
 import '../services/firebase_location_service.dart';
@@ -55,6 +56,8 @@ class _TrackingScreenState extends State<TrackingScreen> {
   final FirebaseLocationService _firebaseLocationService =
       FirebaseLocationService();
   Timer? _firebaseSyncTimer;
+  bool _nearingDestinationNotified = false;
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
   @override
   void initState() {
@@ -86,7 +89,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
     if (!serviceEnabled && mounted) {
       _showGpsDisabledAlert();
     } else {
-      _getCurrentLocation();
+      await _getCurrentLocation();
     }
   }
 
@@ -145,7 +148,134 @@ class _TrackingScreenState extends State<TrackingScreen> {
     _firebaseSyncTimer?.cancel();
     _mapController?.dispose();
     _qrScannerController?.dispose();
+    _audioPlayer.dispose();
     super.dispose();
+  }
+
+  Future<void> _playApproachSound() async {
+    try {
+      await _audioPlayer.stop();
+      await _audioPlayer.play(AssetSource('sounds/success.mp3'));
+    } catch (e) {
+      debugPrint('Error playing approach sound: \$e');
+    }
+  }
+
+  void _showNearingNotification(String dropPointName) {
+    if (!mounted) return;
+    _playApproachSound();
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: Colors.orange[50],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.orange[800]!, width: 2),
+          ),
+          title: Row(
+            children: [
+              Icon(
+                Icons.notifications_active,
+                color: Colors.orange[800],
+                size: 32,
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Approaching Destination',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.orange[100],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.location_on,
+                      color: Colors.orange[900],
+                      size: 28,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        dropPointName,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange[900],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.orange[700],
+                    size: 24,
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'You are approaching your destination. Please prepare to stop.',
+                      style: TextStyle(fontSize: 15),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Distance threshold: ${(AppConstants.proximityNotificationThresholdKm * 1000).toInt()}m',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              icon: const Icon(Icons.check_circle, color: Colors.white),
+              label: const Text(
+                'Acknowledged',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange[800],
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ],
+          actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+        );
+      },
+    );
   }
 
   double _calculateBearing(LatLng start, LatLng end) {
@@ -338,16 +468,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
       _isRouteLoading = false;
     });
 
-    // Fetch and display the new route
-    _loadRoute();
-
-    // Initialize truck at current GPS location
-    if (_currentPosition != null) {
-      _trackingController.setTruckPosition(
-        LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-      );
-      _buildMarkersAndPolylines();
-    }
+    // Route loading is triggered by onMapCreated once the map is ready.
+    // Starting it here causes simulation to fire before the native map exists,
+    // which overwhelms the UI thread and causes the app to become unresponsive.
   }
 
   void _buildMarkersAndPolylines() {
@@ -426,27 +549,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
       if (_trackingController.currentSegmentCoordinates.isNotEmpty) {
         if (_trackingController.isAnimating.value &&
             _trackingController.truckPosition.value != null) {
-          // During animation, show polyline from truck to destination
-          int truckIndex = 0;
-          double minDistance = double.infinity;
-
-          for (
-            int i = 0;
-            i < _trackingController.currentSegmentCoordinates.length;
-            i++
-          ) {
-            final coord = _trackingController.currentSegmentCoordinates[i];
-            final distance = _calculateDistance(
-              _trackingController.truckPosition.value!.latitude,
-              _trackingController.truckPosition.value!.longitude,
-              coord.latitude,
-              coord.longitude,
-            );
-            if (distance < minDistance) {
-              minDistance = distance;
-              truckIndex = i;
-            }
-          }
+          // During animation, use the already-tracked index instead of an
+          // O(n) nearest-point search on every frame.
+          final int truckIndex = _currentRouteCoordinateIndex;
 
           List<LatLng> remainingRoute = [
             _trackingController.truckPosition.value!,
@@ -734,78 +839,111 @@ class _TrackingScreenState extends State<TrackingScreen> {
         );
       }
       _trackingController.setAnimatingState(true);
+      _nearingDestinationNotified = false;
       _buildMarkersAndPolylines();
     });
 
     const lerpSteps = 20;
-    _animationTimer = Timer.periodic(
-      Duration(
-        milliseconds:
-            (AppConstants.truckAnimationIntervalMs ~/
-                    (lerpSteps * AppConstants.animationSpeedMultiplier))
-                .toInt(),
-      ),
-      (timer) {
-        if (!_trackingController.isAnimating.value) {
-          timer.cancel();
-          return;
-        }
+    // Clamp to ≥16 ms so we never fire setState faster than 60 fps,
+    // which would overwhelm the UI thread during map rendering.
+    final int frameIntervalMs =
+        (AppConstants.truckAnimationIntervalMs /
+                (lerpSteps * AppConstants.animationSpeedMultiplier))
+            .round()
+            .clamp(16, 500);
+    _animationTimer = Timer.periodic(Duration(milliseconds: frameIntervalMs), (
+      timer,
+    ) {
+      if (!_trackingController.isAnimating.value) {
+        timer.cancel();
+        return;
+      }
 
-        if (_currentRouteCoordinateIndex <
-            _trackingController.currentSegmentCoordinates.length - 1) {
-          setState(() {
-            _lerpProgress += 1.0 / lerpSteps;
+      if (_currentRouteCoordinateIndex <
+          _trackingController.currentSegmentCoordinates.length - 1) {
+        setState(() {
+          _lerpProgress += 1.0 / lerpSteps;
 
-            if (_lerpProgress >= 1.0) {
-              _currentRouteCoordinateIndex++;
-              _lerpProgress = 0.0;
+          if (_lerpProgress >= 1.0) {
+            _currentRouteCoordinateIndex++;
+            _lerpProgress = 0.0;
 
-              if (_currentRouteCoordinateIndex <
-                  _trackingController.currentSegmentCoordinates.length - 1) {
-                _trackingController.setTruckPosition(
-                  _trackingController
-                      .currentSegmentCoordinates[_currentRouteCoordinateIndex],
-                );
-                _targetPosition = _trackingController
-                    .currentSegmentCoordinates[_currentRouteCoordinateIndex + 1];
-                _trackingController.setTruckRotation(
-                  _calculateBearing(
-                    _trackingController.truckPosition.value!,
-                    _targetPosition!,
-                  ),
-                );
-              } else {
-                _trackingController.setTruckPosition(
-                  _trackingController.currentSegmentCoordinates.last,
-                );
-                _trackingController.setAnimatingState(false);
-                timer.cancel();
-                // Show alert after the frame is rendered
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  _showArrivalAlert();
-                });
-              }
-            } else {
-              final start = _trackingController
-                  .currentSegmentCoordinates[_currentRouteCoordinateIndex];
-              final end = _trackingController
-                  .currentSegmentCoordinates[_currentRouteCoordinateIndex + 1];
+            if (_currentRouteCoordinateIndex <
+                _trackingController.currentSegmentCoordinates.length - 1) {
               _trackingController.setTruckPosition(
-                _lerpLatLng(start, end, _lerpProgress),
+                _trackingController
+                    .currentSegmentCoordinates[_currentRouteCoordinateIndex],
               );
+              _targetPosition = _trackingController
+                  .currentSegmentCoordinates[_currentRouteCoordinateIndex + 1];
+              _trackingController.setTruckRotation(
+                _calculateBearing(
+                  _trackingController.truckPosition.value!,
+                  _targetPosition!,
+                ),
+              );
+            } else {
+              _trackingController.setTruckPosition(
+                _trackingController.currentSegmentCoordinates.last,
+              );
+              _trackingController.setAnimatingState(false);
+              timer.cancel();
+              // Show alert after the frame is rendered
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _showArrivalAlert();
+              });
             }
+          } else {
+            final start = _trackingController
+                .currentSegmentCoordinates[_currentRouteCoordinateIndex];
+            final end = _trackingController
+                .currentSegmentCoordinates[_currentRouteCoordinateIndex + 1];
+            _trackingController.setTruckPosition(
+              _lerpLatLng(start, end, _lerpProgress),
+            );
+          }
 
-            _buildMarkersAndPolylines();
-            _updateCameraFollowTruck();
-          });
-        } else {
-          setState(() {
-            _trackingController.setAnimatingState(false);
-          });
-          timer.cancel();
-        }
-      },
-    );
+          // Proximity notification
+          if (!_nearingDestinationNotified &&
+              _trackingController.truckPosition.value != null) {
+            final dest = _trackingController.currentSegmentCoordinates.last;
+            final dist = _calculateDistance(
+              _trackingController.truckPosition.value!.latitude,
+              _trackingController.truckPosition.value!.longitude,
+              dest.latitude,
+              dest.longitude,
+            );
+            if (dist < AppConstants.proximityNotificationThresholdKm) {
+              _nearingDestinationNotified = true;
+              final routePoints = List<Map<String, dynamic>>.from(
+                _trackingController.selectedRoute.value!['route_points'] ?? [],
+              );
+              final validPoints = routePoints
+                  .where((p) => p['lat'] != null && p['lng'] != null)
+                  .toList();
+              final nextPoint =
+                  validPoints[_trackingController.currentSegmentIndex.value +
+                      1];
+              final dpName =
+                  nextPoint['drop_point_name']?.toString() ??
+                  nextPoint['drop_point_code']?.toString() ??
+                  'destination';
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _showNearingNotification(dpName);
+              });
+            }
+          }
+
+          _buildMarkersAndPolylines();
+          _updateCameraFollowTruck();
+        });
+      } else {
+        setState(() {
+          _trackingController.setAnimatingState(false);
+        });
+        timer.cancel();
+      }
+    });
   }
 
   void _toggleTracking() {
@@ -836,6 +974,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
     if (_trackingController.currentSegmentCoordinates.isEmpty) return;
 
     setState(() {
+      _nearingDestinationNotified = false;
       _trackingController.setAnimatingState(true);
       // Place the truck icon immediately so it's visible before the first GPS event
       final initialPosition = _currentPosition != null
@@ -903,6 +1042,27 @@ class _TrackingScreenState extends State<TrackingScreen> {
               _positionStreamSubscription?.cancel();
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 _showArrivalAlert();
+              });
+            } else if (!_nearingDestinationNotified &&
+                distanceToDestination <
+                    AppConstants.proximityNotificationThresholdKm) {
+              // Within threshold distance — notify driver
+              _nearingDestinationNotified = true;
+              final routePoints = List<Map<String, dynamic>>.from(
+                _trackingController.selectedRoute.value!['route_points'] ?? [],
+              );
+              final validPoints = routePoints
+                  .where((p) => p['lat'] != null && p['lng'] != null)
+                  .toList();
+              final nextPoint =
+                  validPoints[_trackingController.currentSegmentIndex.value +
+                      1];
+              final dpName =
+                  nextPoint['drop_point_name']?.toString() ??
+                  nextPoint['drop_point_code']?.toString() ??
+                  'destination';
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _showNearingNotification(dpName);
               });
             }
 
@@ -1085,6 +1245,14 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 : 'You have arrived at $dropPointName.\n\nPlease scan the drop point code and items to complete this delivery.',
           ),
           actions: [
+            if (!isHeadOffice)
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _proceedToNextSegment(validPoints);
+                },
+                child: const Text('Skip'),
+              ),
             ElevatedButton(
               onPressed: () async {
                 Navigator.of(context).pop();
@@ -1095,10 +1263,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   final lat = double.tryParse(currentPoint['lat'].toString());
                   final lng = double.tryParse(currentPoint['lng'].toString());
                   if (lat != null && lng != null) {
-                    await _firebaseLocationService.markDeliveryCompleted(
-                      dropPointCode: dropPointCode,
-                      location: LatLng(lat, lng),
-                    );
+                    // await _firebaseLocationService.markDeliveryCompleted(
+                    //   dropPointCode: dropPointCode,
+                    //   location: LatLng(lat, lng),
+                    // );
                   }
                   _proceedToNextSegment(validPoints);
                 } else {
@@ -1119,10 +1287,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
                     final lat = double.tryParse(currentPoint['lat'].toString());
                     final lng = double.tryParse(currentPoint['lng'].toString());
                     if (lat != null && lng != null) {
-                      await _firebaseLocationService.markDeliveryCompleted(
-                        dropPointCode: dropPointCode,
-                        location: LatLng(lat, lng),
-                      );
+                      // await _firebaseLocationService.markDeliveryCompleted(
+                      //   dropPointCode: dropPointCode,
+                      //   location: LatLng(lat, lng),
+                      // );
                     }
                     _proceedToNextSegment(validPoints);
                   }

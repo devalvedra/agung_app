@@ -63,7 +63,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '247303180375',
     projectId: 'api-expedition-app',
     storageBucket: 'api-expedition-app.firebasestorage.app',
-    iosBundleId: 'com.example.deliveryApp',
+    iosBundleId: 'com.eshia.deliveryApp',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
@@ -72,7 +72,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '247303180375',
     projectId: 'api-expedition-app',
     storageBucket: 'api-expedition-app.firebasestorage.app',
-    iosBundleId: 'com.example.deliveryApp',
+    iosBundleId: 'com.eshia.deliveryApp',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(

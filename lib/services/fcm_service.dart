@@ -126,7 +126,7 @@ class FCMService {
 
     // Create notification channel for Android
     const AndroidNotificationChannel channel = AndroidNotificationChannel(
-      'delivery_app_channel', // id
+      'agung_app_channel', // id
       'Delivery Notifications', // name
       description: 'Notifications for delivery app updates',
       importance: Importance.high,
@@ -163,7 +163,7 @@ class FCMService {
   }) async {
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
-          'delivery_app_channel',
+          'agung_app_channel',
           'Delivery Notifications',
           channelDescription: 'Notifications for delivery app updates',
           importance: Importance.high,

@@ -11,7 +11,7 @@ class DatabaseHelper {
   /// Get database instance
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB('delivery_app.db');
+    _database = await _initDB('agung_app.db');
     return _database!;
   }
 

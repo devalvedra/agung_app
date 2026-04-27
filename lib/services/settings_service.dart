@@ -6,7 +6,7 @@ class SettingsService {
   static final SettingsService instance = SettingsService._init();
   static const String _baseUrlKey = 'api_base_url';
   static const String _iduserKey = 'iduser';
-  static const String _defaultBaseUrl = 'http://10.14.225.210:8000';
+  static const String _defaultBaseUrl = 'http://192.168.1.102:8000';
   static const String _defaultIduser = 'aling';
 
   String? _cachedBaseUrl;

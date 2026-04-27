@@ -1,20 +1,60 @@
 import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
-/// Service to sync truck location with Firebase Realtime Database
-class FirebaseLocationService {
+/// Service to sync truck location and delivery data with Firebase Realtime Database.
+///
+/// Firebase structure:
+/// ```
+/// trucks/{vehicleNo}/currentLocation/   ← real-time position (always latest)
+///
+/// deliveries/{date}/{vehicleNo}/
+///   driverId: "aling"
+///   activeRoute/      ← route info for the day
+///   status/           ← current tracking status
+///   locationHistory/  ← push-keyed GPS updates for the day
+///   completedDeliveries/ ← push-keyed records of each confirmed drop-point delivery
+/// ```
+class FirebaseLocationService extends GetxService {
   final DatabaseReference _database = FirebaseDatabase.instance.ref();
 
-  // Unique truck/driver ID (should be retrieved from authentication in production)
-  String? _truckId;
+  String? _vehicleNo;
+  String? _driverId;
 
-  /// Initialize the service with a truck ID
-  void initialize(String truckId) {
-    _truckId = truckId;
+  /// Returns today's date string in "yyyy-MM-dd" format.
+  String get _todayDate {
+    final now = DateTime.now();
+    return '${now.year}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
   }
 
-  /// Save truck location to Firebase
+  /// Reference to the real-time current-location node (no date, always overwritten).
+  DatabaseReference get _currentLocationRef =>
+      _database.child('trucks').child(_vehicleNo!).child('currentLocation');
+
+  /// Reference to today's delivery node for this vehicle.
+  DatabaseReference get _todayRef =>
+      _database.child('deliveries').child(_todayDate).child(_vehicleNo!);
+
+  /// Initialize the service with the vehicle number and optional driver ID.
+  void initialize(String vehicleNo, {String? driverId}) {
+    _vehicleNo = vehicleNo;
+    _driverId = driverId;
+  }
+
+  void _assertInitialized() {
+    if (_vehicleNo == null) {
+      throw Exception(
+        'FirebaseLocationService not initialized. Call initialize() first.',
+      );
+    }
+  }
+
+  /// Save truck location to Firebase.
+  /// - Updates real-time current location under trucks/{vehicleNo}/currentLocation.
+  /// - Appends to today's location history under deliveries/{date}/{vehicleNo}/locationHistory.
   Future<void> saveLocation({
     required LatLng position,
     required String routeCode,
@@ -22,9 +62,7 @@ class FirebaseLocationService {
     double? bearing,
     bool isSimulation = false,
   }) async {
-    if (_truckId == null) {
-      throw Exception('Truck ID not initialized. Call initialize() first.');
-    }
+    _assertInitialized();
 
     try {
       final locationData = {
@@ -37,34 +75,23 @@ class FirebaseLocationService {
         'timestamp': ServerValue.timestamp,
       };
 
-      // Save to trucks/{truckId}/currentLocation
-      await _database
-          .child('trucks')
-          .child(_truckId!)
-          .child('currentLocation')
-          .set(locationData);
+      // Real-time position for live tracking (always overwritten)
+      await _currentLocationRef.set(locationData);
 
-      // Also save to location history with timestamp
-      await _database
-          .child('trucks')
-          .child(_truckId!)
-          .child('locationHistory')
-          .push()
-          .set(locationData);
+      // Daily history entry
+      await _todayRef.child('locationHistory').push().set(locationData);
     } catch (e) {
       throw Exception('Failed to save location to Firebase: $e');
     }
   }
 
-  /// Save route information to Firebase
+  /// Save route information for today under deliveries/{date}/{vehicleNo}/activeRoute.
   Future<void> saveRouteInfo({
     required String routeCode,
     required String routeName,
     required List<Map<String, dynamic>> routePoints,
   }) async {
-    if (_truckId == null) {
-      throw Exception('Truck ID not initialized. Call initialize() first.');
-    }
+    _assertInitialized();
 
     try {
       final routeData = {
@@ -73,51 +100,43 @@ class FirebaseLocationService {
         'routePoints': routePoints,
         'startTime': ServerValue.timestamp,
         'status': 'active',
+        if (_driverId != null) 'driverId': _driverId,
       };
 
-      await _database
-          .child('trucks')
-          .child(_truckId!)
-          .child('activeRoute')
-          .set(routeData);
+      await _todayRef.child('activeRoute').set(routeData);
     } catch (e) {
       throw Exception('Failed to save route info to Firebase: $e');
     }
   }
 
-  /// Update truck status
+  /// Update tracking status under deliveries/{date}/{vehicleNo}/status.
   Future<void> updateTruckStatus({
     required String status,
     Map<String, dynamic>? additionalData,
   }) async {
-    if (_truckId == null) {
-      throw Exception('Truck ID not initialized. Call initialize() first.');
-    }
+    _assertInitialized();
 
     try {
       final statusData = {
         'status': status,
         'timestamp': ServerValue.timestamp,
+        if (_driverId != null) 'driverId': _driverId,
         ...?additionalData,
       };
 
-      await _database
-          .child('trucks')
-          .child(_truckId!)
-          .child('status')
-          .set(statusData);
+      await _todayRef.child('status').set(statusData);
     } catch (e) {
       throw Exception('Failed to update truck status: $e');
     }
   }
 
-  /// Listen to location updates for a specific truck
-  Stream<Map<String, dynamic>> listenToTruckLocation(String truckId) {
+  /// Listen to real-time location updates for a specific vehicle.
+  Stream<Map<String, dynamic>> listenToTruckLocation(String vehicleNo) {
     final controller = StreamController<Map<String, dynamic>>();
 
     _database
         .child('trucks')
-        .child(truckId)
+        .child(vehicleNo)
         .child('currentLocation')
         .onValue
         .listen((event) {
@@ -130,12 +149,12 @@ class FirebaseLocationService {
     return controller.stream;
   }
 
-  /// Get current location for a specific truck
-  Future<Map<String, dynamic>?> getTruckLocation(String truckId) async {
+  /// Get current real-time location for a specific vehicle.
+  Future<Map<String, dynamic>?> getTruckLocation(String vehicleNo) async {
     try {
       final snapshot = await _database
           .child('trucks')
-          .child(truckId)
+          .child(vehicleNo)
           .child('currentLocation')
           .get();
 
@@ -148,15 +167,18 @@ class FirebaseLocationService {
     }
   }
 
-  /// Get location history for a specific truck
+  /// Get today's location history for a specific vehicle.
   Future<List<Map<String, dynamic>>> getLocationHistory(
-    String truckId, {
+    String vehicleNo, {
+    String? date,
     int? limit,
   }) async {
     try {
+      final dateKey = date ?? _todayDate;
       Query query = _database
-          .child('trucks')
-          .child(truckId)
+          .child('deliveries')
+          .child(dateKey)
+          .child(vehicleNo)
           .child('locationHistory')
           .orderByChild('timestamp');
 
@@ -174,7 +196,6 @@ class FirebaseLocationService {
           history.add(Map<String, dynamic>.from(value as Map));
         });
 
-        // Sort by timestamp descending
         history.sort(
           (a, b) => (b['timestamp'] ?? 0).compareTo(a['timestamp'] ?? 0),
         );
@@ -187,32 +208,28 @@ class FirebaseLocationService {
     }
   }
 
-  /// Clear location history for the current truck
+  /// Clear today's location history for the current vehicle.
   Future<void> clearLocationHistory() async {
-    if (_truckId == null) {
-      throw Exception('Truck ID not initialized. Call initialize() first.');
-    }
+    _assertInitialized();
 
     try {
-      await _database
-          .child('trucks')
-          .child(_truckId!)
-          .child('locationHistory')
-          .remove();
+      await _todayRef.child('locationHistory').remove();
     } catch (e) {
       throw Exception('Failed to clear location history: $e');
     }
   }
 
-  /// Mark delivery as completed at a drop point
+  /// Record a completed drop-point delivery under
+  /// deliveries/{date}/{vehicleNo}/completedDeliveries/{pushId}.
+  ///
+  /// [scannedItems] is the list of item maps from the delivery scanner.
   Future<void> markDeliveryCompleted({
     required String dropPointCode,
     required LatLng location,
     List<String>? invoiceNumbers,
+    List<Map<String, String>>? scannedItems,
   }) async {
-    if (_truckId == null) {
-      throw Exception('Truck ID not initialized. Call initialize() first.');
-    }
+    _assertInitialized();
 
     try {
       final deliveryData = {
@@ -220,43 +237,63 @@ class FirebaseLocationService {
         'latitude': location.latitude,
         'longitude': location.longitude,
         'invoiceNumbers': invoiceNumbers ?? [],
+        'itemCount': scannedItems?.length ?? 0,
+        'scannedItems': scannedItems ?? [],
+        if (_driverId != null) 'driverId': _driverId,
         'timestamp': ServerValue.timestamp,
       };
 
-      await _database
-          .child('trucks')
-          .child(_truckId!)
-          .child('completedDeliveries')
-          .push()
-          .set(deliveryData);
+      await _todayRef.child('completedDeliveries').push().set(deliveryData);
     } catch (e) {
       throw Exception('Failed to mark delivery as completed: $e');
     }
   }
 
-  /// End the current route
-  Future<void> endRoute() async {
-    if (_truckId == null) {
-      throw Exception('Truck ID not initialized. Call initialize() first.');
+  /// Get all completed deliveries for a vehicle on a given date (defaults to today).
+  Future<List<Map<String, dynamic>>> getCompletedDeliveries(
+    String vehicleNo, {
+    String? date,
+  }) async {
+    try {
+      final dateKey = date ?? _todayDate;
+      final snapshot = await _database
+          .child('deliveries')
+          .child(dateKey)
+          .child(vehicleNo)
+          .child('completedDeliveries')
+          .orderByChild('timestamp')
+          .get();
+
+      if (snapshot.exists) {
+        final List<Map<String, dynamic>> deliveries = [];
+        final data = Map<String, dynamic>.from(snapshot.value as Map);
+
+        data.forEach((key, value) {
+          deliveries.add(Map<String, dynamic>.from(value as Map));
+        });
+
+        deliveries.sort(
+          (a, b) => (a['timestamp'] ?? 0).compareTo(b['timestamp'] ?? 0),
+        );
+
+        return deliveries;
+      }
+      return [];
+    } catch (e) {
+      throw Exception('Failed to get completed deliveries: $e');
     }
+  }
+
+  /// Mark the current route as finished for the day.
+  Future<void> endRoute() async {
+    _assertInitialized();
 
     try {
-      // Update route status
-      await _database
-          .child('trucks')
-          .child(_truckId!)
-          .child('activeRoute')
-          .child('status')
-          .set('completed');
+      await _todayRef.child('activeRoute').update({
+        'status': 'completed',
+        'endTime': ServerValue.timestamp,
+      });
 
-      await _database
-          .child('trucks')
-          .child(_truckId!)
-          .child('activeRoute')
-          .child('endTime')
-          .set(ServerValue.timestamp);
-
-      // Update truck status
       await updateTruckStatus(status: 'idle');
     } catch (e) {
       throw Exception('Failed to end route: $e');

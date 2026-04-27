@@ -386,6 +386,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
         // Initialize GPS now that we have a vehicle
         await _checkGpsAndInitialize();
 
+        // Initialize Firebase service with vehicle/driver info now that we have vehicleNo
+        _initializeFirebaseService();
+
         // Select the fetched route
         _onRouteSelected(route);
 
@@ -996,8 +999,8 @@ class _TrackingScreenState extends State<TrackingScreen> {
     });
 
     // Start Firebase sync
-    // _startFirebaseSync();
-    // _updateFirebaseTruckStatus('tracking');
+    _startFirebaseSync();
+    _updateFirebaseTruckStatus('tracking');
 
     // Start listening to GPS position updates
     _positionStreamSubscription =
@@ -1122,12 +1125,15 @@ class _TrackingScreenState extends State<TrackingScreen> {
     _updateCameraFollowTruck();
   }
 
-  /// Initialize Firebase location service with truck ID
+  /// Initialize Firebase location service with the current vehicle number and driver ID.
   void _initializeFirebaseService() {
-    // In production, get this from authentication/user profile
-    // For now, using a default truck ID
-    final truckId = 'truck_001'; // TODO: Get from authentication
-    _firebaseLocationService.initialize(truckId);
+    final vehicleNo = _vehicleNo ?? 'unknown';
+    final driverId = SettingsService.instance.iduser;
+    _firebaseLocationService.initialize(vehicleNo, driverId: driverId);
+    // Register with GetX so other screens (e.g. DeliveryScanner) can access it.
+    if (!Get.isRegistered<FirebaseLocationService>()) {
+      Get.put(_firebaseLocationService);
+    }
   }
 
   /// Start syncing location to Firebase periodically

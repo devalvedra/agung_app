@@ -1,12 +1,14 @@
 import 'dart:convert';
 import 'dart:developer';
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
 import 'package:get/get.dart';
 import '../controllers/scanned_items_controller.dart';
+import '../services/firebase_location_service.dart';
 import '../services/settings_service.dart';
 import 'proof_capture_screen.dart';
 
@@ -696,6 +698,24 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
       );
 
       if (result == true && mounted) {
+        // Record completed delivery in Firebase Realtime Database (date-separated)
+        try {
+          if (Get.isRegistered<FirebaseLocationService>()) {
+            final firebase = Get.find<FirebaseLocationService>();
+            await firebase.markDeliveryCompleted(
+              dropPointCode: dropPointCode,
+              location: const LatLng(
+                0,
+                0,
+              ), // GPS not required here; caller can pass position
+              invoiceNumbers: invoiceNumbers,
+              scannedItems: List<Map<String, String>>.from(_scannedItems),
+            );
+          }
+        } catch (e) {
+          debugPrint('Firebase delivery record error: $e');
+        }
+
         // Notify backend that each invoice has been delivered
         for (final invoiceNo in invoiceNumbers) {
           await _updateStatusByInvoice(invoiceNo);

@@ -1,15 +1,35 @@
 {
   "project_info": {
     "project_number": "247303180375",
+    "firebase_url": "https://api-expedition-app-default-rtdb.asia-southeast1.firebasedatabase.app",
     "project_id": "api-expedition-app",
     "storage_bucket": "api-expedition-app.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:247303180375:android:d48a3d8e507a8bb0dad312",
+        "mobilesdk_app_id": "1:247303180375:android:ee4b3622835a2f3adad312",
         "android_client_info": {
           "package_name": "com.eshia.agung_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAyLWDybSEqyfS-FgLjiBQ6vaLr0geqP4o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:247303180375:android:d48a3d8e507a8bb0dad312",
+        "android_client_info": {
+          "package_name": "com.example.delivery_app"
         }
       },
       "oauth_client": [],

@@ -388,6 +388,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
         // Select the fetched route
         _onRouteSelected(route);
+
+        // Notify backend that all invoices in this vehicle are now in transit
+        _updateStatusByVehicle(vehicleNo);
       } else {
         setState(() {
           _isFetchingRoute = false;
@@ -1190,6 +1193,37 @@ class _TrackingScreenState extends State<TrackingScreen> {
     }
   }
 
+  /// Update delivery status via API when vehicle QR is scanned
+  Future<void> _updateStatusByVehicle(String vehicleNo) async {
+    try {
+      final baseUrl = SettingsService.instance.baseUrl;
+      final uri = Uri.parse('$baseUrl/api/delivery/update-status-by-vehicle');
+
+      final body = <String, dynamic>{
+        'status': 'Dikirim',
+        'username': SettingsService.instance.iduser,
+        'vehicle_no': vehicleNo,
+      };
+
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: json.encode(body),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      debugPrint(
+        'Update status by vehicle [$vehicleNo]: ${response.statusCode} - ${response.body}',
+      );
+    } catch (e) {
+      debugPrint('Error updating status by vehicle: $e');
+    }
+  }
+
   /// Update truck status in Firebase
   Future<void> _updateFirebaseTruckStatus(String status) async {
     try {
@@ -1259,15 +1293,6 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
                 if (isHeadOffice) {
                   // Skip scanning for Head Office, proceed directly to next segment
-                  // Mark delivery as completed in Firebase
-                  final lat = double.tryParse(currentPoint['lat'].toString());
-                  final lng = double.tryParse(currentPoint['lng'].toString());
-                  if (lat != null && lng != null) {
-                    // await _firebaseLocationService.markDeliveryCompleted(
-                    //   dropPointCode: dropPointCode,
-                    //   location: LatLng(lat, lng),
-                    // );
-                  }
                   _proceedToNextSegment(validPoints);
                 } else {
                   // Navigate to DeliveryScanner for other drop points
@@ -1282,16 +1307,8 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   );
 
                   // After returning from scanning, proceed to next segment
+                  // Invoice status (Sampai Tujuan) is updated by DeliveryScanner
                   if (result == true) {
-                    // Mark delivery as completed in Firebase
-                    final lat = double.tryParse(currentPoint['lat'].toString());
-                    final lng = double.tryParse(currentPoint['lng'].toString());
-                    if (lat != null && lng != null) {
-                      // await _firebaseLocationService.markDeliveryCompleted(
-                      //   dropPointCode: dropPointCode,
-                      //   location: LatLng(lat, lng),
-                      // );
-                    }
                     _proceedToNextSegment(validPoints);
                   }
                 }

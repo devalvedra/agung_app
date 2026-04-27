@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -433,6 +434,70 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
     }
   }
 
+  Future<void> _loadItemsIntoVehicle(
+    String vehicleNo,
+    List<String> invoices,
+  ) async {
+    try {
+      final baseUrl = SettingsService.instance.baseUrl;
+      final uri = Uri.parse('$baseUrl/api/delivery/load-items-into-vehicle');
+
+      final body = {
+        'status': 'DIMUAT',
+        'username': SettingsService.instance.iduser,
+        'invoices': invoices,
+        'vehicle_no': vehicleNo,
+      };
+
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: json.encode(body),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      debugPrint(
+        'Load items into vehicle [$vehicleNo]: ${response.statusCode} - ${response.body}',
+      );
+    } catch (e) {
+      debugPrint('Error loading items into vehicle: $e');
+    }
+  }
+
+  Future<void> _updateStatusByInvoice(String invoiceNo) async {
+    try {
+      final baseUrl = SettingsService.instance.baseUrl;
+      final uri = Uri.parse('$baseUrl/api/delivery/update-status-by-invoice');
+
+      final body = {
+        'status': 'SAMPAI_TUJUAN',
+        'username': SettingsService.instance.iduser,
+        'invoice_no': invoiceNo,
+      };
+
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: json.encode(body),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      debugPrint(
+        'Update status by invoice [$invoiceNo]: ${response.statusCode} - ${response.body}',
+      );
+    } catch (e) {
+      debugPrint('Error updating status by invoice: $e');
+    }
+  }
+
   Future<void> _confirmItems() async {
     final category = _currentDropPoint!['category'];
 
@@ -543,27 +608,13 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
       } else {
         // All current sections complete, but stay in Kendaraan category for new drop points
 
-        // Send put request to update the delivery status
+        // Collect all unique invoice codes and notify backend items are loaded
         final invoiceCodes = _scannedItems
             .map((item) => item['invoice_code'] ?? '')
             .where((inv) => inv.isNotEmpty)
-            .toSet();
-        for (final invoiceCode in invoiceCodes) {
-          try {
-            final baseUrl = SettingsService.instance.baseUrl;
-            final uri = Uri.parse('$baseUrl/api/delivery/$invoiceCode/status');
-            await http.put(
-              uri,
-              body: {
-                'vehicle_no': _currentDropPoint?['code'],
-                'username': 'Aling',
-                'status': 'Menunggu Supir',
-              },
-            );
-          } catch (e) {
-            log('Failed to update status for $invoiceCode: $e');
-          }
-        }
+            .toSet()
+            .toList();
+        await _loadItemsIntoVehicle(_currentDropPoint!['code'], invoiceCodes);
 
         showDialog(
           context: context,
@@ -645,6 +696,11 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
       );
 
       if (result == true && mounted) {
+        // Notify backend that each invoice has been delivered
+        for (final invoiceNo in invoiceNumbers) {
+          await _updateStatusByInvoice(invoiceNo);
+        }
+
         // Show success message
         _showTopMessage(
           '✓ $itemCount items delivered to $dropPointCode with proof',

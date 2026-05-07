@@ -22,6 +22,9 @@ class TrackingController extends GetxController {
   // Route coordinates
   final RxList<LatLng> currentSegmentCoordinates = <LatLng>[].obs;
 
+  // All invoice numbers for the current vehicle/route
+  final RxList<String> vehicleInvoices = <String>[].obs;
+
   // Methods to update state
   void setSelectedRoute(String? routeCode, Map<String, dynamic>? route) {
     selectedRouteCode.value = routeCode ?? '';
@@ -52,6 +55,14 @@ class TrackingController extends GetxController {
     currentSegmentCoordinates.value = coordinates;
   }
 
+  void setVehicleInvoices(List<String> invoices) {
+    vehicleInvoices.value = invoices;
+  }
+
+  void removeDeliveredInvoices(List<String> delivered) {
+    vehicleInvoices.removeWhere((inv) => delivered.contains(inv));
+  }
+
   void resetTracking() {
     selectedRoute.value = null;
     selectedRouteCode.value = '';
@@ -60,6 +71,7 @@ class TrackingController extends GetxController {
     truckRotation.value = 0.0;
     isAnimating.value = false;
     currentSegmentCoordinates.clear();
+    vehicleInvoices.clear();
   }
 
   void incrementSegment() {

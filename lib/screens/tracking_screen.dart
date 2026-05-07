@@ -57,6 +57,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
       FirebaseLocationService();
   Timer? _firebaseSyncTimer;
   bool _nearingDestinationNotified = false;
+  bool _isNearingDialogOpen = false;
   final AudioPlayer _audioPlayer = AudioPlayer();
 
   @override
@@ -157,12 +158,13 @@ class _TrackingScreenState extends State<TrackingScreen> {
       await _audioPlayer.stop();
       await _audioPlayer.play(AssetSource('sounds/success.mp3'));
     } catch (e) {
-      debugPrint('Error playing approach sound: \$e');
+      // ignore sound errors
     }
   }
 
   void _showNearingNotification(String dropPointName) {
     if (!mounted) return;
+    _isNearingDialogOpen = true;
     _playApproachSound();
     showDialog(
       context: context,
@@ -252,6 +254,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
           actions: [
             ElevatedButton.icon(
               onPressed: () {
+                _isNearingDialogOpen = false;
                 Navigator.of(context).pop();
               },
               icon: const Icon(Icons.check_circle, color: Colors.white),
@@ -332,9 +335,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
       }
 
       _currentPosition = await Geolocator.getCurrentPosition();
-    } catch (e) {
-      debugPrint('Error getting location: $e');
-    }
+    } catch (_) {}
   }
 
   void _handleVehicleQrScan(BarcodeCapture capture) {
@@ -391,9 +392,6 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
         // Select the fetched route
         _onRouteSelected(route);
-
-        // Notify backend that all invoices in this vehicle are now in transit
-        _updateStatusByVehicle(vehicleNo);
       } else {
         setState(() {
           _isFetchingRoute = false;
@@ -464,8 +462,28 @@ class _TrackingScreenState extends State<TrackingScreen> {
   void _onRouteSelected(Map<String, dynamic> route) {
     final routeCode = route['code']?.toString() ?? '';
 
+    // Extract invoice numbers from route_point[].invoices[].no_invoice.
+    final Set<String> invoices = {};
+    final routePoints = route['route_points'];
+    if (routePoints is List) {
+      for (final point in routePoints) {
+        if (point is Map) {
+          final pointInvoices = point['invoices'];
+          if (pointInvoices is List) {
+            for (final inv in pointInvoices) {
+              if (inv is Map) {
+                final no = inv['no_invoice']?.toString();
+                if (no != null && no.isNotEmpty) invoices.add(no);
+              }
+            }
+          }
+        }
+      }
+    }
+
     setState(() {
       _trackingController.setSelectedRoute(routeCode, route);
+      _trackingController.setVehicleInvoices(invoices.toList());
       _currentPointIndex = 0;
       _trackingController.setCurrentSegmentIndex(0);
       _markers.clear();
@@ -644,6 +662,14 @@ class _TrackingScreenState extends State<TrackingScreen> {
     // Fetch real route using Directions API (only for current segment)
     await _fetchRealRoute(currentSegmentPoints);
     _isRouteLoading = false;
+
+    // Only proceed (and notify backend) if the route was actually fetched
+    if (_routeCoordinates.isEmpty) return;
+
+    // Notify backend that all invoices in this vehicle are now in transit
+    if (_vehicleNo != null) {
+      _updateStatusByVehicle(_vehicleNo!);
+    }
 
     // Focus camera on the current segment
     _updateCameraForCurrentSegment(allValidPoints);
@@ -1166,17 +1192,26 @@ class _TrackingScreenState extends State<TrackingScreen> {
     }
 
     try {
+      final position = _trackingController.truckPosition.value!;
+
       await _firebaseLocationService.saveLocation(
-        position: _trackingController.truckPosition.value!,
+        position: position,
         routeCode: _trackingController.selectedRouteCode.value,
         segmentIndex: _trackingController.currentSegmentIndex.value,
         bearing: _trackingController.truckRotation.value,
         isSimulation: _trackingController.isSimulationMode.value,
       );
-    } catch (e) {
-      debugPrint('Error syncing location to Firebase: $e');
-      // Don't show error to user to avoid interrupting tracking
-    }
+
+      // Update location for all known invoices (not yet delivered)
+      final invoiceNumbers = _trackingController.vehicleInvoices.toList();
+
+      if (invoiceNumbers.isNotEmpty) {
+        await _firebaseLocationService.updateDeliveryLocations(
+          position: position,
+          invoiceNumbers: invoiceNumbers,
+        );
+      }
+    } catch (_) {}
   }
 
   /// Save route info to Firebase when route is selected
@@ -1194,9 +1229,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
         routeName: route['name'] ?? '',
         routePoints: routePoints,
       );
-    } catch (e) {
-      debugPrint('Error saving route to Firebase: $e');
-    }
+    } catch (_) {}
   }
 
   /// Update delivery status via API when vehicle QR is scanned
@@ -1206,7 +1239,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
       final uri = Uri.parse('$baseUrl/api/delivery/update-status-by-vehicle');
 
       final body = <String, dynamic>{
-        'status': 'Dikirim',
+        'status': 'SEDANG_DIKIRIM',
         'username': SettingsService.instance.iduser,
         'vehicle_no': vehicleNo,
       };
@@ -1221,13 +1254,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
             body: json.encode(body),
           )
           .timeout(const Duration(seconds: 15));
-
-      debugPrint(
-        'Update status by vehicle [$vehicleNo]: ${response.statusCode} - ${response.body}',
-      );
-    } catch (e) {
-      debugPrint('Error updating status by vehicle: $e');
-    }
+    } catch (_) {}
   }
 
   /// Update truck status in Firebase
@@ -1240,13 +1267,17 @@ class _TrackingScreenState extends State<TrackingScreen> {
           'segmentIndex': _trackingController.currentSegmentIndex.value,
         },
       );
-    } catch (e) {
-      debugPrint('Error updating truck status: $e');
-    }
+    } catch (_) {}
   }
 
   void _showArrivalAlert() {
     if (_trackingController.selectedRoute.value == null) return;
+
+    // Dismiss the nearing notification dialog if it is still open
+    if (_isNearingDialogOpen && mounted) {
+      _isNearingDialogOpen = false;
+      Navigator.of(context).pop();
+    }
 
     final routePoints = List<Map<String, dynamic>>.from(
       _trackingController.selectedRoute.value!['route_points'] ?? [],
@@ -1289,6 +1320,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
               TextButton(
                 onPressed: () {
                   Navigator.of(context).pop();
+                  _stopFirebaseSync();
                   _proceedToNextSegment(validPoints);
                 },
                 child: const Text('Skip'),
@@ -1299,6 +1331,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
                 if (isHeadOffice) {
                   // Skip scanning for Head Office, proceed directly to next segment
+                  _stopFirebaseSync();
                   _proceedToNextSegment(validPoints);
                 } else {
                   // Navigate to DeliveryScanner for other drop points
@@ -1315,6 +1348,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   // After returning from scanning, proceed to next segment
                   // Invoice status (Sampai Tujuan) is updated by DeliveryScanner
                   if (result == true) {
+                    _stopFirebaseSync();
                     _proceedToNextSegment(validPoints);
                   }
                 }

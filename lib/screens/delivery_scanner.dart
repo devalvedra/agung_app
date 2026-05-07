@@ -8,6 +8,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
 import 'package:get/get.dart';
 import '../controllers/scanned_items_controller.dart';
+import '../controllers/tracking_controller.dart';
 import '../services/firebase_location_service.dart';
 import '../services/settings_service.dart';
 import 'proof_capture_screen.dart';
@@ -476,7 +477,7 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
       final uri = Uri.parse('$baseUrl/api/delivery/update-status-by-invoice');
 
       final body = {
-        'status': 'SAMPAI_TUJUAN',
+        'status': 'SELESAI',
         'username': SettingsService.instance.iduser,
         'invoice_no': invoiceNo,
       };
@@ -710,6 +711,12 @@ class _DeliveryScannerState extends State<DeliveryScanner> {
               ), // GPS not required here; caller can pass position
               invoiceNumbers: invoiceNumbers,
               scannedItems: List<Map<String, String>>.from(_scannedItems),
+            );
+          }
+          // Remove delivered invoices from the active sync list
+          if (Get.isRegistered<TrackingController>()) {
+            Get.find<TrackingController>().removeDeliveredInvoices(
+              invoiceNumbers,
             );
           }
         } catch (e) {

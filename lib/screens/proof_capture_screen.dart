@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
@@ -56,7 +58,6 @@ class _ProofCaptureScreenState extends State<ProofCaptureScreen> {
         }
       }
     } catch (e) {
-      debugPrint('Error initializing camera: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -90,9 +91,7 @@ class _ProofCaptureScreenState extends State<ProofCaptureScreen> {
       _currentPosition = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
-    } catch (e) {
-      debugPrint('Error getting location: $e');
-    }
+    } catch (_) {}
   }
 
   Future<void> _captureImage() async {
@@ -113,7 +112,6 @@ class _ProofCaptureScreenState extends State<ProofCaptureScreen> {
         _isCapturing = false;
       });
     } catch (e) {
-      debugPrint('Error capturing image: $e');
       setState(() {
         _isCapturing = false;
       });
@@ -173,7 +171,33 @@ class _ProofCaptureScreenState extends State<ProofCaptureScreen> {
         await originalFile.delete();
       }
 
-      // Save to database for each invoice
+      // Upload to Firebase Storage
+      String? downloadUrl;
+      try {
+        final storageRef = FirebaseStorage.instance
+            .ref()
+            .child('proof_images')
+            .child(fileName);
+        await storageRef.putFile(File(newPath));
+        downloadUrl = await storageRef.getDownloadURL();
+
+        // Store the download URL in the Realtime Database for each invoice
+        final db = FirebaseDatabase.instance.ref();
+        for (final invoiceNo in widget.invoiceNumbers) {
+          await db.child('deliveries').child(invoiceNo).update({
+            'proofImageUrl': downloadUrl,
+            'proofTimestamp': ServerValue.timestamp,
+            if (_currentPosition != null) ...{
+              'proofLatitude': _currentPosition!.latitude,
+              'proofLongitude': _currentPosition!.longitude,
+            },
+          });
+        }
+      } catch (_) {
+        // Firebase upload failure is non-fatal — local copy is still saved
+      }
+
+      // Save to local database for each invoice
       final dbHelper = DatabaseHelper();
       for (final invoiceNumber in widget.invoiceNumbers) {
         await dbHelper.insertTracking(
@@ -198,7 +222,6 @@ class _ProofCaptureScreenState extends State<ProofCaptureScreen> {
         Navigator.of(context).pop(true);
       }
     } catch (e) {
-      debugPrint('Error saving proof image: $e');
       setState(() {
         _isSaving = false;
       });

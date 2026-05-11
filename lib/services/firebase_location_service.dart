@@ -254,7 +254,10 @@ class FirebaseLocationService extends GetxService {
           'timestamp': ServerValue.timestamp,
         };
 
-        await _database.child('deliveries').child(invoiceNo).set(deliveryData);
+        await _database
+            .child('deliveries')
+            .child(invoiceNo)
+            .update(deliveryData);
       }
     } catch (e) {
       throw Exception('Failed to mark delivery as completed: $e');

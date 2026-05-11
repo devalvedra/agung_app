@@ -569,15 +569,13 @@ class _TrackingScreenState extends State<TrackingScreen> {
         );
       }
 
-      // Draw segment polyline
+      // Draw segment polyline — always from truck's position to destination
       if (_trackingController.currentSegmentCoordinates.isNotEmpty) {
-        if (_trackingController.isAnimating.value &&
-            _trackingController.truckPosition.value != null) {
-          // During animation, use the already-tracked index instead of an
-          // O(n) nearest-point search on every frame.
+        if (_trackingController.truckPosition.value != null) {
+          // Use the already-tracked coordinate index to avoid an O(n) search.
           final int truckIndex = _currentRouteCoordinateIndex;
 
-          List<LatLng> remainingRoute = [
+          final List<LatLng> remainingRoute = [
             _trackingController.truckPosition.value!,
             ..._trackingController.currentSegmentCoordinates.sublist(
               truckIndex + 1,
@@ -587,7 +585,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
           if (remainingRoute.length >= 2) {
             _polylines.add(
               Polyline(
-                polylineId: PolylineId('truck_to_destination'),
+                polylineId: const PolylineId('truck_to_destination'),
                 points: remainingRoute,
                 color: Colors.blue,
                 width: 5,
@@ -595,10 +593,10 @@ class _TrackingScreenState extends State<TrackingScreen> {
             );
           }
         } else {
-          // When not animating, show full segment polyline
+          // No truck position yet — show full segment so the route is visible
           _polylines.add(
             Polyline(
-              polylineId: PolylineId('current_segment'),
+              polylineId: const PolylineId('current_segment'),
               points: _trackingController.currentSegmentCoordinates.toList(),
               color: Colors.blue,
               width: 5,

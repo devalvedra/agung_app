@@ -12,6 +12,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   final _baseUrlController = TextEditingController();
   final _iduserController = TextEditingController();
+  final _assignedFloorController = TextEditingController();
   bool _isLoading = true;
   bool _isSaving = false;
   String _defaultBaseUrl = '';
@@ -26,6 +27,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void dispose() {
     _baseUrlController.dispose();
     _iduserController.dispose();
+    _assignedFloorController.dispose();
     super.dispose();
   }
 
@@ -35,9 +37,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       final currentUrl = await SettingsService.instance.getBaseUrl();
       final currentIduser = await SettingsService.instance.getIduser();
+      final currentFloor = await SettingsService.instance.getAssignedFloor();
       _defaultBaseUrl = SettingsService.instance.getDefaultBaseUrl();
       _baseUrlController.text = currentUrl;
       _iduserController.text = currentIduser ?? '';
+      _assignedFloorController.text = currentFloor.join(', ');
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -60,10 +64,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() => _isSaving = true);
     try {
       await SettingsService.instance.setBaseUrl(_baseUrlController.text.trim());
+      await SettingsService.instance.setIduser(_iduserController.text.trim());
+      await SettingsService.instance.setAssignedFloor(
+        _assignedFloorController.text
+            .split(',')
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .toList(),
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Base URL saved successfully'),
+            content: Text('Settings saved successfully'),
             backgroundColor: Colors.green,
           ),
         );
@@ -182,6 +194,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       enabled: !_isSaving,
                       keyboardType: TextInputType.text,
                     ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _assignedFloorController,
+                      decoration: const InputDecoration(
+                        labelText: 'Assigned Floors',
+                        hintText: 'e.g. 1, 2, Ground',
+                        border: OutlineInputBorder(),
+                        helperText:
+                            'Comma-separated floors assigned to this user for new order pickup',
+                        prefixIcon: Icon(Icons.layers),
+                      ),
+                      enabled: !_isSaving,
+                      keyboardType: TextInputType.text,
+                    ),
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
@@ -220,6 +246,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     Text(
                       '• The base URL is used for all API requests\n'
                       '• User ID is included when updating pickup items\n'
+                      '• Assigned Floor is used when fetching new pickup orders\n'
                       '• If no custom URL is saved, the default from .env file is used\n'
                       '• Click the refresh icon to reset to the default value\n'
                       '• Changes take effect immediately after saving',

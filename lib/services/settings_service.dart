@@ -6,11 +6,13 @@ class SettingsService {
   static final SettingsService instance = SettingsService._init();
   static const String _baseUrlKey = 'api_base_url';
   static const String _iduserKey = 'iduser';
+  static const String _assignedFloorKey = 'assigned_floor';
   static const String _defaultBaseUrl = 'http://192.168.1.102:8000';
   static const String _defaultIduser = 'aling';
 
   String? _cachedBaseUrl;
   String? _cachedIduser;
+  List<String>? _cachedAssignedFloor;
 
   SettingsService._init();
 
@@ -18,6 +20,7 @@ class SettingsService {
   Future<void> initialize() async {
     _cachedBaseUrl = await _loadBaseUrl();
     _cachedIduser = await _loadIduser();
+    _cachedAssignedFloor = await _loadAssignedFloor();
   }
 
   /// Load base URL from database, fallback to .env, then default
@@ -91,6 +94,7 @@ class SettingsService {
   Future<void> reload() async {
     _cachedBaseUrl = await _loadBaseUrl();
     _cachedIduser = await _loadIduser();
+    _cachedAssignedFloor = await _loadAssignedFloor();
   }
 
   // ==================== IDUSER MANAGEMENT ====================
@@ -144,5 +148,53 @@ class SettingsService {
   Future<void> clearIduser() async {
     await DatabaseHelper.instance.deleteSetting(_iduserKey);
     _cachedIduser = null;
+  }
+
+  // ==================== ASSIGNED FLOOR MANAGEMENT ====================
+
+  /// Load assigned floors from database (stored as comma-separated string)
+  Future<List<String>> _loadAssignedFloor() async {
+    try {
+      final dbValue = await DatabaseHelper.instance.getSetting(
+        _assignedFloorKey,
+      );
+      if (dbValue != null && dbValue.isNotEmpty) {
+        return dbValue
+            .split(',')
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// Get the current assigned floors (synchronously from cache)
+  List<String> get assignedFloor {
+    return _cachedAssignedFloor ?? [];
+  }
+
+  /// Get the current assigned floors (asynchronously - ensures fresh data)
+  Future<List<String>> getAssignedFloor() async {
+    if (_cachedAssignedFloor != null) {
+      return _cachedAssignedFloor!;
+    }
+    _cachedAssignedFloor = await _loadAssignedFloor();
+    return _cachedAssignedFloor!;
+  }
+
+  /// Update the assigned floors and save to database as comma-separated string
+  Future<void> setAssignedFloor(List<String> floors) async {
+    final value = floors
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .join(',');
+    await DatabaseHelper.instance.insertOrUpdateSetting(
+      _assignedFloorKey,
+      value,
+    );
+    _cachedAssignedFloor = floors.where((s) => s.trim().isNotEmpty).toList();
   }
 }

@@ -26,8 +26,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   final List<Widget> _screens = [
     const HomeScreen(),
     const PickupItemScreen(),
-    const TrackingScreen(),
-    const OrdersScreen(),
+    // const TrackingScreen(),
+    // const OrdersScreen(),
     const ProfileScreen(),
   ];
 
@@ -51,14 +51,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             icon: Icon(Icons.qr_code_scanner),
             label: 'Pickup',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.location_on),
-            label: 'Tracking',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.shopping_bag),
-            label: 'Orders',
-          ),
+          // BottomNavigationBarItem(
+          //   icon: Icon(Icons.location_on),
+          //   label: 'Tracking',
+          // ),
+          // BottomNavigationBarItem(
+          //   icon: Icon(Icons.shopping_bag),
+          //   label: 'Orders',
+          // ),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
         ],
       ),

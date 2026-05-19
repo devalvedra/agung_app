@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+import '../services/auth_service.dart';
 import '../services/settings_service.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -11,10 +13,10 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final _formKey = GlobalKey<FormState>();
   final _baseUrlController = TextEditingController();
-  final _iduserController = TextEditingController();
   final _assignedFloorController = TextEditingController();
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _isLoggingOut = false;
   String _defaultBaseUrl = '';
 
   @override
@@ -26,21 +28,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void dispose() {
     _baseUrlController.dispose();
-    _iduserController.dispose();
     _assignedFloorController.dispose();
     super.dispose();
   }
 
-  /// Load current settings from database
   Future<void> _loadSettings() async {
     setState(() => _isLoading = true);
     try {
       final currentUrl = await SettingsService.instance.getBaseUrl();
-      final currentIduser = await SettingsService.instance.getIduser();
       final currentFloor = await SettingsService.instance.getAssignedFloor();
       _defaultBaseUrl = SettingsService.instance.getDefaultBaseUrl();
       _baseUrlController.text = currentUrl;
-      _iduserController.text = currentIduser ?? '';
       _assignedFloorController.text = currentFloor.join(', ');
     } catch (e) {
       if (mounted) {
@@ -49,22 +47,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ).showSnackBar(SnackBar(content: Text('Error loading settings: $e')));
       }
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  /// Save settings to database
   Future<void> _saveSettings() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
+    if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isSaving = true);
     try {
       await SettingsService.instance.setBaseUrl(_baseUrlController.text.trim());
-      await SettingsService.instance.setIduser(_iduserController.text.trim());
       await SettingsService.instance.setAssignedFloor(
         _assignedFloorController.text
             .split(',')
@@ -84,19 +76,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error saving base URL: $e'),
+            content: Text('Error saving settings: $e'),
             backgroundColor: Colors.red,
           ),
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
-      }
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
-  /// Reset base URL to default value
   Future<void> _resetToDefault() async {
     setState(() => _isSaving = true);
     try {
@@ -120,18 +109,79 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       }
     } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sign Out'),
+        content: const Text('Are you sure you want to sign out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _isLoggingOut = true);
+    try {
+      final baseUrl = SettingsService.instance.baseUrl;
+      await AuthService.instance.logout(baseUrl);
       if (mounted) {
-        setState(() => _isSaving = false);
+        Get.offAllNamed('/login');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoggingOut = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error signing out: $e')));
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final user = AuthService.instance.user;
+    final iduser = AuthService.instance.iduser;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Profile'),
-        backgroundColor: Colors.purple,
+        backgroundColor: Colors.blueAccent,
+        foregroundColor: Colors.white,
+        actions: [
+          if (_isLoggingOut)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.logout),
+              tooltip: 'Sign Out',
+              onPressed: _logout,
+            ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -142,6 +192,62 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // ── User info card ──
+                    Card(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 28,
+                              backgroundColor: Colors.blueAccent.shade100,
+                              child: const Icon(
+                                Icons.person,
+                                size: 32,
+                                color: Colors.blueAccent,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    user?['nama']?.toString() ?? iduser,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  if (iduser.isNotEmpty)
+                                    Text(
+                                      'ID: $iduser',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  if (user?['email'] != null)
+                                    Text(
+                                      user!['email'].toString(),
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
+                    // ── API Configuration ──
                     const Text(
                       'API Configuration',
                       style: TextStyle(
@@ -181,19 +287,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       'Default: $_defaultBaseUrl',
                       style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                     ),
-                    const SizedBox(height: 24),
-                    TextFormField(
-                      controller: _iduserController,
-                      decoration: const InputDecoration(
-                        labelText: 'User ID',
-                        hintText: 'Enter your user ID',
-                        border: OutlineInputBorder(),
-                        helperText: 'User ID sent with API requests (optional)',
-                        prefixIcon: Icon(Icons.person),
-                      ),
-                      enabled: !_isSaving,
-                      keyboardType: TextInputType.text,
-                    ),
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _assignedFloorController,
@@ -214,7 +307,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       child: ElevatedButton(
                         onPressed: _isSaving ? null : _saveSettings,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.purple,
+                          backgroundColor: Colors.blueAccent,
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 16),
                         ),
@@ -245,12 +338,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const SizedBox(height: 8),
                     Text(
                       '• The base URL is used for all API requests\n'
-                      '• User ID is included when updating pickup items\n'
                       '• Assigned Floor is used when fetching new pickup orders\n'
                       '• If no custom URL is saved, the default from .env file is used\n'
                       '• Click the refresh icon to reset to the default value\n'
                       '• Changes take effect immediately after saving',
                       style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                    ),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _isLoggingOut ? null : _logout,
+                        icon: const Icon(Icons.logout, color: Colors.red),
+                        label: const Text(
+                          'Sign Out',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Colors.red),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                      ),
                     ),
                   ],
                 ),

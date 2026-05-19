@@ -144,6 +144,11 @@ class SettingsService {
     _cachedIduser = cleanIduser;
   }
 
+  /// Sync iduser from an external source (e.g. AuthService) without saving to DB
+  void syncIduser(String iduser) {
+    _cachedIduser = iduser;
+  }
+
   /// Clear iduser from database and cache
   Future<void> clearIduser() async {
     await DatabaseHelper.instance.deleteSetting(_iduserKey);

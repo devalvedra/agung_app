@@ -7,7 +7,9 @@ import 'screens/orders_screen.dart';
 import 'screens/tracking_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/pickup_item_screen.dart';
+import 'screens/login_screen.dart';
 import 'widgets/main_navigation_screen.dart';
+import 'services/auth_service.dart';
 import 'services/fcm_service.dart';
 import 'services/settings_service.dart';
 
@@ -31,6 +33,16 @@ void main() async {
     debugPrint('Error initializing Settings Service: $e');
   }
 
+  // Initialize Auth Service
+  try {
+    await AuthService.instance.initialize();
+    debugPrint(
+      'Auth Service initialized – logged in: ${AuthService.instance.isLoggedIn}',
+    );
+  } catch (e) {
+    debugPrint('Error initializing Auth Service: $e');
+  }
+
   try {
     await Firebase.initializeApp();
     debugPrint('Firebase initialized successfully');
@@ -44,21 +56,25 @@ void main() async {
     // Continue even if Firebase fails to allow app to work offline
   }
 
-  runApp(const MainApp());
+  runApp(
+    MainApp(initialRoute: AuthService.instance.isLoggedIn ? '/' : '/login'),
+  );
 }
 
 class MainApp extends StatelessWidget {
-  const MainApp({super.key});
+  final String initialRoute;
+
+  const MainApp({super.key, this.initialRoute = '/login'});
 
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
-      title: 'Delivery App',
+      title: 'Agung App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
-      // Define routes for navigation
-      initialRoute: '/',
+      initialRoute: initialRoute,
       getPages: [
+        GetPage(name: '/login', page: () => const LoginScreen()),
         GetPage(
           name: '/',
           page: () {

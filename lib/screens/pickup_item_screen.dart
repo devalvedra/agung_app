@@ -212,6 +212,7 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
       );
       log('Fetching admin order list: $uri');
       final response = await http.get(uri);
+      log('API Response: ${response.statusCode} - ${response.body}');
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(response.body);
         if (jsonResponse['success'] == true) {
@@ -220,6 +221,8 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
             setState(() {
               _adminInvoiceList = [];
               _adminSelectedTab = status == 'selesai' ? 1 : 0;
+              _showInitialButtons = false;
+              _showAdminList = true;
               _errorMessage = null;
               _isLoading = false;
             });
@@ -653,6 +656,13 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
         Expanded(
           child: _isLoading
               ? const Center(child: CircularProgressIndicator())
+              : _adminInvoiceList.isEmpty
+              ? const Center(
+                  child: Text(
+                    'No data',
+                    style: TextStyle(fontSize: 16, color: Colors.grey),
+                  ),
+                )
               : ListView.separated(
                   padding: const EdgeInsets.all(12),
                   itemCount: _adminInvoiceList.length,
@@ -1804,8 +1814,58 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                           ),
                         ),
                       ),
-                    // All Orders button (admin only)
+                    // Admin buttons
                     if (SettingsService.instance.iduser == 'admin') ...[
+                      SizedBox(
+                        width: double.infinity,
+                        height: 56,
+                        child: ElevatedButton.icon(
+                          onPressed: _fetchNewOrderData,
+                          icon: const Icon(Icons.add_shopping_cart, size: 24),
+                          label: const Text(
+                            'New Order',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 4,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 56,
+                        child: ElevatedButton.icon(
+                          onPressed: () => setState(() {
+                            _showInitialButtons = false;
+                            _currentScanMode = ScanMode.invoice;
+                          }),
+                          icon: const Icon(Icons.qr_code_scanner, size: 24),
+                          label: const Text(
+                            'Scan QR',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.blueAccent,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 4,
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 16),
                       SizedBox(
                         width: double.infinity,

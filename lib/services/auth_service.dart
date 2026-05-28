@@ -53,6 +53,10 @@ class AuthService {
       _cachedUser?['name']?.toString() ??
       '';
 
+  String get role => _cachedUser?['role']?.toString() ?? '';
+
+  bool get isAdmin => role == 'admin';
+
   /// Headers including Bearer token for authenticated requests
   Map<String, String> get authHeaders => {
     'Content-Type': 'application/json',

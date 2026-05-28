@@ -6,6 +6,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
+import '../services/auth_service.dart';
 import '../services/settings_service.dart';
 
 /// Scan mode enum to track current scanning state
@@ -206,12 +207,14 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
     });
     try {
       final String baseUrl = SettingsService.instance.baseUrl;
-      final String iduser = SettingsService.instance.iduser;
       final uri = Uri.parse(
-        '$baseUrl/api/sell/pickup-items?iduser=${Uri.encodeQueryComponent(iduser)}&status_pickup=${Uri.encodeQueryComponent(status)}',
+        '$baseUrl/api/sell/all-pickup-items?status_pickup=${Uri.encodeQueryComponent(status)}',
       );
       log('Fetching admin order list: $uri');
-      final response = await http.get(uri);
+      final response = await http.get(
+        uri,
+        headers: AuthService.instance.authHeaders,
+      );
       log('API Response: ${response.statusCode} - ${response.body}');
       if (response.statusCode == 200) {
         final jsonResponse = json.decode(response.body);
@@ -1383,8 +1386,10 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
 
       if (scannedLocatorItems.length == locatorItems.length) {
         if (_scannedItems.length == listBarang.length) {
-          // All invoice items complete — rebuild to show confirm button
-          setState(() {});
+          // All invoice items complete — auto-proceed to confirm scan
+          Future.delayed(const Duration(milliseconds: 400), () {
+            if (mounted) _confirmLocatorDone();
+          });
         } else {
           // Auto-advance to next locator after a brief delay
           Future.delayed(const Duration(milliseconds: 800), () {
@@ -1629,10 +1634,9 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
 
     final listBarang = _currentInvoice!['list_barang'] as List<dynamic>;
 
-    // If all invoice items are scanned, submit the pickup status
+    // If all invoice items are scanned, update pickup status
     if (_scannedItems.length == listBarang.length) {
-      final invoiceNumber = _currentInvoice!['nojual'];
-      _updatePickupStatus(invoiceNumber);
+      _updatePickupStatus(_currentInvoice!['nojual'] as String);
       return;
     }
 
@@ -1815,7 +1819,7 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                         ),
                       ),
                     // Admin buttons
-                    if (SettingsService.instance.iduser == 'admin') ...[
+                    if (!AuthService.instance.isAdmin) ...[
                       SizedBox(
                         width: double.infinity,
                         height: 56,
@@ -2030,6 +2034,7 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                                     size: 20,
                                   ),
                                 ),
+
                             ],
                           ),
                         ),
@@ -2184,28 +2189,20 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                             // Items list grouped by locator
                             Expanded(child: _buildItemsList()),
 
-                            // Confirm button — shown only when all invoice items are scanned
-                            if (_currentInvoice != null &&
-                                _scannedItems.length ==
-                                    (_currentInvoice!['list_barang'] as List)
-                                        .length)
+                            // Progress text
+                            if (_currentInvoice != null)
                               Padding(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 16,
-                                  vertical: 8,
+                                  vertical: 10,
                                 ),
-                                child: ElevatedButton.icon(
-                                  onPressed: () => _updatePickupStatus(
-                                    _currentInvoice!['nojual'],
-                                  ),
-                                  icon: const Icon(Icons.check_circle),
-                                  label: Text(
-                                    'Confirm All (${_scannedItems.length}/${(_currentInvoice!['list_barang'] as List).length})',
-                                  ),
-                                  style: ElevatedButton.styleFrom(
-                                    minimumSize: const Size.fromHeight(48),
-                                    backgroundColor: Colors.green,
-                                    foregroundColor: Colors.white,
+                                child: Text(
+                                  'Scanned: ${_scannedItems.length} / ${(_currentInvoice!['list_barang'] as List).length} items',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.grey.shade700,
                                   ),
                                 ),
                               ),

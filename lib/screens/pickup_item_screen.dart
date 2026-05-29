@@ -242,6 +242,7 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                   : (rawBarang as Map).values.toList();
               return {
                 'nojual': inv['nojual'] ?? '',
+                'vendor': inv['vendor'],
                 'no_qr': inv['no_qr'],
                 'status_pickup': inv['status_pickup'] ?? 'pending',
                 'list_barang': listBarang,
@@ -702,9 +703,23 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                                 : Colors.orange.shade700,
                           ),
                         ),
-                        title: Text(
-                          invoice['nojual'] as String,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        title: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${invoice['nojual']}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              '${invoice['vendor']}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.normal,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
                         ),
                         subtitle: Row(
                           children: [
@@ -1762,7 +1777,7 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                     ],
                     const SizedBox(height: 40),
                     // New Order button
-                    if (SettingsService.instance.iduser != 'admin')
+                    if (!AuthService.instance.isAdmin)
                       SizedBox(
                         width: double.infinity,
                         height: 56,
@@ -1786,10 +1801,10 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                           ),
                         ),
                       ),
-                    if (SettingsService.instance.iduser != 'admin')
+                    if (!AuthService.instance.isAdmin)
                       const SizedBox(height: 16),
                     // Scan QR button
-                    if (SettingsService.instance.iduser != 'admin')
+                    if (!AuthService.instance.isAdmin)
                       SizedBox(
                         width: double.infinity,
                         height: 56,
@@ -1819,7 +1834,7 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                         ),
                       ),
                     // Admin buttons
-                    if (!AuthService.instance.isAdmin) ...[
+                    if (AuthService.instance.isAdmin) ...[
                       SizedBox(
                         width: double.infinity,
                         height: 56,
@@ -2034,7 +2049,6 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                                     size: 20,
                                   ),
                                 ),
-
                             ],
                           ),
                         ),

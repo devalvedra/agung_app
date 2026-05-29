@@ -381,6 +381,7 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                   ),
                 ),
                 const Divider(height: 1),
+
                 Expanded(
                   child: ListView.builder(
                     controller: scrollController,
@@ -548,6 +549,34 @@ class _PickupItemScreenState extends State<PickupItemScreen> {
                     },
                   ),
                 ),
+
+                if ((invoice['status_pickup'] ?? 'pending') != 'selesai')
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          _startPickupFromAdminInvoice(invoice);
+                        },
+                        icon: const Icon(Icons.play_arrow),
+                        label: const Text('Begin Picking'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blueAccent,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 24),
+                          textStyle: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             );
           },

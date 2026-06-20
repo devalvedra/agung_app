@@ -7,6 +7,7 @@ import 'screens/orders_screen.dart';
 import 'screens/tracking_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/pickup_item_screen.dart';
+import 'screens/checker_screen.dart';
 import 'screens/login_screen.dart';
 import 'widgets/main_navigation_screen.dart';
 import 'services/auth_service.dart';
@@ -84,6 +85,7 @@ class MainApp extends StatelessWidget {
           },
         ),
         GetPage(name: '/pickup', page: () => const PickupItemScreen()),
+        GetPage(name: '/checker', page: () => const CheckerScreen()),
         GetPage(name: '/home', page: () => const HomeScreen()),
         GetPage(name: '/orders', page: () => const OrdersScreen()),
         GetPage(name: '/tracking', page: () => const TrackingScreen()),

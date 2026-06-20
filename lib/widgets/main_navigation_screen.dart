@@ -4,6 +4,7 @@ import '../screens/orders_screen.dart';
 import '../screens/tracking_screen.dart';
 import '../screens/profile_screen.dart';
 import '../screens/pickup_item_screen.dart';
+import '../screens/checker_screen.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   final int initialIndex;
@@ -28,6 +29,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     const PickupItemScreen(),
     const TrackingScreen(),
     // const OrdersScreen(),
+    const CheckerScreen(),
     const ProfileScreen(),
   ];
 
@@ -59,6 +61,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           //   icon: Icon(Icons.shopping_bag),
           //   label: 'Orders',
           // ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.fact_check),
+            label: 'Checker',
+          ),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
         ],
       ),

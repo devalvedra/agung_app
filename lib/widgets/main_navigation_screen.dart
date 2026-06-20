@@ -1,10 +1,5 @@
 import 'package:flutter/material.dart';
-import '../screens/home_screen.dart';
-import '../screens/orders_screen.dart';
-import '../screens/tracking_screen.dart';
-import '../screens/profile_screen.dart';
-import '../screens/pickup_item_screen.dart';
-import '../screens/checker_screen.dart';
+import '../constants/navigation_menu_settings.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   final int initialIndex;
@@ -17,28 +12,41 @@ class MainNavigationScreen extends StatefulWidget {
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   late int _currentIndex;
+  late final List<BottomMenuConfig> _activeMenus;
 
   @override
   void initState() {
     super.initState();
-    _currentIndex = widget.initialIndex;
+    _activeMenus = activeBottomMenuSettings;
+    _currentIndex = _normalizeIndex(widget.initialIndex);
   }
 
-  final List<Widget> _screens = [
-    const HomeScreen(),
-    const PickupItemScreen(),
-    const TrackingScreen(),
-    // const OrdersScreen(),
-    const CheckerScreen(),
-    const ProfileScreen(),
-  ];
+  int _normalizeIndex(int index) {
+    if (_activeMenus.isEmpty) {
+      return 0;
+    }
+
+    if (index < 0 || index >= _activeMenus.length) {
+      return 0;
+    }
+
+    return index;
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (_activeMenus.isEmpty) {
+      return const Scaffold(
+        body: Center(child: Text('No active menu items configured.')),
+      );
+    }
+
+    final safeIndex = _normalizeIndex(_currentIndex);
+
     return Scaffold(
-      body: _screens[_currentIndex],
+      body: _activeMenus[safeIndex].screen,
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
+        currentIndex: safeIndex,
         onTap: (index) {
           setState(() {
             _currentIndex = index;
@@ -47,26 +55,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         type: BottomNavigationBarType.fixed,
         selectedItemColor: Colors.blue,
         unselectedItemColor: Colors.grey,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.qr_code_scanner),
-            label: 'Pickup',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.location_on),
-            label: 'Tracking',
-          ),
-          // BottomNavigationBarItem(
-          //   icon: Icon(Icons.shopping_bag),
-          //   label: 'Orders',
-          // ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.fact_check),
-            label: 'Checker',
-          ),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
-        ],
+        items: _activeMenus
+            .map(
+              (menu) => BottomNavigationBarItem(
+                icon: Icon(menu.icon),
+                label: menu.label,
+              ),
+            )
+            .toList(),
       ),
     );
   }
